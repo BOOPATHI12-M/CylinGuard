@@ -1,0 +1,38 @@
+# Session handoff notes - local only, never committed
+memory/
+
+# Environment / secrets
+.env
+.env.local
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# ML artifacts
+*.joblib
+*.pkl
+backend/app/ml/artifacts/
+
+# Node
+node_modules/
+dist/
+.vite/
+coverage/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
