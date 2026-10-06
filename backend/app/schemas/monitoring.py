@@ -207,3 +207,25 @@ class SettingsUpdate(BaseModel):
     measurement_interval: Optional[int] = Field(default=None, gt=0, le=86400)
     prediction_threshold: Optional[int] = Field(default=None, ge=0, le=365)
     demo_mode: Optional[bool] = None
+
+
+class CylinderSummary(BaseModel):
+    """One row in the cylinder picker.
+
+    Carries enough derived state for the selector to show a level and a status word
+    without the frontend having to fetch a dashboard per cylinder.
+    """
+
+    id: int
+    cylinder_code: str
+    empty_weight_kg: float
+    capacity_kg: float
+    # None until the device has reported at least once. The selector shows "no data"
+    # rather than 0%, which would look like an empty cylinder.
+    remaining_kg: Optional[float]
+    percentage: Optional[float]
+    status: Optional[str]
+    device_status: Optional[str]
+    has_readings: bool
+    demo_mode: bool
+    last_reading_at: Optional[datetime]

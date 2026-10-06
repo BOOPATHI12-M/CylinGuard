@@ -197,3 +197,48 @@ def test_settings_cannot_write_anything_secret(client, cylinder, auth):
     )
     assert response.status_code == 200
     assert "jwt_secret" not in response.text
+
+
+# --- GET /api/cylinders (phase 5) ----------------------------------------
+
+def test_lists_only_my_cylinders(client, db, cylinder, auth):
+    """Added in phase 5: without this the shell had a hardcoded cylinder id."""
+    stranger = make_user(db, "cyl-stranger@test.local")
+    make_cylinder(db, stranger, "CYL-NOT-MINE")
+
+    body = client.get("/api/cylinders", headers=auth).json()
+    codes = [row["cylinder_code"] for row in body]
+    assert "CYL-TEST-001" in codes
+    assert "CYL-NOT-MINE" not in codes
+
+
+def test_cylinder_summary_carries_derived_level(client, cylinder, auth):
+    row = next(
+        r
+        for r in client.get("/api/cylinders", headers=auth).json()
+        if r["cylinder_code"] == "CYL-TEST-001"
+    )
+    assert row["remaining_kg"] == 8.2
+    assert row["percentage"] == 57.7
+    assert row["status"] == "NORMAL"
+    assert row["has_readings"] is True
+    assert row["device_status"] == "ONLINE"
+
+
+def test_a_cylinder_with_no_readings_reports_null_not_zero(client, db, owner, auth):
+    """0% would read as an empty cylinder; null lets the UI say "no data"."""
+    make_cylinder(db, owner, "CYL-SILENT")
+
+    row = next(
+        r
+        for r in client.get("/api/cylinders", headers=auth).json()
+        if r["cylinder_code"] == "CYL-SILENT"
+    )
+    assert row["has_readings"] is False
+    assert row["remaining_kg"] is None
+    assert row["percentage"] is None
+    assert row["status"] is None
+
+
+def test_listing_cylinders_requires_a_token(client):
+    assert client.get("/api/cylinders").status_code == 401

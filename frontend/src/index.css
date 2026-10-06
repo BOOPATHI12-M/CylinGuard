@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #root {
+    @apply h-full;
+  }
+
+  body {
+    @apply bg-base text-ink font-sans antialiased;
+    /* A faint radial wash stops a large dark page looking flat without adding a
+       second background colour that would complicate contrast checks. */
+    background-image:
+      radial-gradient(900px 500px at 12% -10%, rgba(56, 189, 248, 0.07), transparent 60%),
+      radial-gradient(700px 420px at 98% 0%, rgba(196, 181, 253, 0.05), transparent 55%);
+    background-attachment: fixed;
+  }
+
+  /* Keyboard focus must be obvious. The default ring is removed by Tailwind's
+     preflight for mouse users, so it is restored explicitly for :focus-visible -
+     every interactive element in the app is reachable by Tab. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent-ring ring-offset-2 ring-offset-base;
+  }
+
+  /* Numbers that get compared down a column need fixed-width digits. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  /* The glass surface: a thin hairline, a translucent fill and a soft inner
+     highlight. Kept as one class so panels cannot drift apart visually. */
+  .glass {
+    @apply rounded-xl2 border border-hairline bg-surface/70 shadow-glass backdrop-blur-xl;
+  }
+
+  .glass-raised {
+    @apply rounded-xl2 border border-hairline bg-surface-raised/80 shadow-glass backdrop-blur-xl;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl2 px-4 py-2.5 text-sm
+           font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply btn bg-accent text-base hover:bg-accent/90;
+  }
+
+  .btn-ghost {
+    @apply btn border border-hairline text-ink-muted hover:border-hairline-strong hover:text-ink;
+  }
+
+  .field {
+    @apply w-full rounded-xl2 border border-hairline bg-surface-raised/60 px-3.5 py-2.5
+           text-sm text-ink placeholder:text-ink-faint focus:border-accent/50;
+  }
+
+  .label {
+    @apply mb-1.5 block text-xs font-medium uppercase tracking-wider text-ink-muted;
+  }
+
+  /* Visible only to screen readers. Used for the live region that announces alerts
+     and for the skip link. */
+  .sr-only-focusable {
+    @apply sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50
+           focus:rounded-xl2 focus:bg-surface-overlay focus:px-4 focus:py-2 focus:text-ink;
+  }
+}
+
+/* Respect the OS "reduce motion" setting: no pulsing, no shimmer, no slides. The
+   emergency banner still changes colour and keeps its text, so nothing is lost. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

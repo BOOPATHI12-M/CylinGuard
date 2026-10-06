@@ -12,6 +12,9 @@ export default defineConfig({
     proxy: {
       '/api': { target: BACKEND, changeOrigin: true },
       '/ws': { target: BACKEND, ws: true, changeOrigin: true },
+      // /health is outside /api. Without this it falls through to the SPA fallback and
+      // returns index.html with a 200, so the check could never fail.
+      '/health': { target: BACKEND, changeOrigin: true },
     },
   },
   build: {

@@ -8,6 +8,7 @@ from app.routes import (
     alerts,
     auth,
     consumption,
+    cylinders,
     dashboard,
     demo,
     history,
@@ -21,6 +22,7 @@ from app.routes import (
 # Order is the order they appear in /docs.
 ROUTERS = [
     auth.router,
+    cylinders.router,
     dashboard.router,
     consumption.router,
     prediction.router,
