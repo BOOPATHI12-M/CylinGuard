@@ -16,6 +16,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from sqlalchemy import text  # noqa: E402
 
 from app.config import settings  # noqa: E402
+from _dbguard import guarded  # noqa: E402
 from app.database import engine  # noqa: E402
 
 SCHEMA_PATH = pathlib.Path(__file__).resolve().parents[2] / "database" / "schema.sql"
@@ -52,4 +53,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(guarded(main))

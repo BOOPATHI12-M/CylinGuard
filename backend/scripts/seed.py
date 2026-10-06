@@ -25,6 +25,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import text  # noqa: E402
 
+from _dbguard import guarded  # noqa: E402
 from app.database import session_scope  # noqa: E402
 from app.models import (  # noqa: E402
     Alert,
@@ -194,7 +195,11 @@ def main() -> int:
             Setting(
                 cylinder_id=cylinder.id,
                 gas_leakage_threshold=GAS_LEAK_THRESHOLD,
-                measurement_interval=READING_INTERVAL_MINUTES * 60,
+                # measurement_interval is deliberately left at the schema
+                # default (30s, the live device cadence). READING_INTERVAL_MINUTES
+                # is only how coarsely this script backfills synthetic history -
+                # writing it here would tell the device to report every 15
+                # minutes, which would bound leak-detection latency at 15 min.
                 demo_mode=True,
             )
         )
@@ -224,24 +229,36 @@ def main() -> int:
         print(f"Inserted {len(ordered_days)} daily consumption records")
 
         # --- predictions (one per day for the last week) ---
-        final_true_weight = readings[-1][1]
-        remaining = max(0.0, final_true_weight - float(EMPTY_WEIGHT))
-        avg = sum(per_day.values()) / max(1, len(per_day))
+        # Each row is the estimate as it would have stood on its own day, so the
+        # prediction chart shows a real downward trend rather than a flat line.
+        # method is FALLBACK, not ML: no model has been trained at this point, and
+        # claiming otherwise would make the dashboard assert something untrue.
+        weight_at = sorted((r.timestamp, true_w) for r, true_w, _ in readings)
         for offset in range(7, 0, -1):
             ts = now - timedelta(days=offset - 1)
-            days_left = remaining / avg if avg > 0 else 0.0
+            true_weight = next(
+                (w for t, w in reversed(weight_at) if t <= ts), weight_at[0][1]
+            )
+            remaining = max(0.0, true_weight - float(EMPTY_WEIGHT))
+            # average over the days that had actually elapsed by `ts`
+            elapsed = [kg for day, kg in per_day.items() if day <= ts.date()]
+            avg = sum(elapsed) / len(elapsed) if elapsed else 0.0
+            days_left = min(remaining / avg, 9999.0) if avg > 0 else 0.0
+            depletion = (
+                (ts + timedelta(days=min(days_left, 3650.0))).date() if avg > 0 else None
+            )
             db.add(
                 Prediction(
                     cylinder_id=cylinder.id,
                     timestamp=ts,
                     remaining_kg=Decimal(f"{remaining:.3f}"),
-                    remaining_days=Decimal(f"{min(days_left, 9999):.2f}"),
-                    predicted_depletion_date=(ts + timedelta(days=days_left)).date()
-                    if avg > 0
-                    else None,
-                    confidence=Decimal("0.780"),
-                    method="ML",
-                    sample_count=len(per_day),
+                    remaining_days=Decimal(f"{days_left:.2f}"),
+                    predicted_depletion_date=depletion,
+                    # Modest, derived from how much history backs it. Phase 2b owns
+                    # the real formula; this only has to be honest, not clever.
+                    confidence=Decimal(f"{min(0.55, 0.15 + 0.01 * len(elapsed)):.3f}"),
+                    method="FALLBACK",
+                    sample_count=len(elapsed),
                 )
             )
         print("Inserted 7 predictions")
@@ -317,16 +334,17 @@ def main() -> int:
             ]
         )
 
+        final_remaining = max(0.0, readings[-1][1] - float(EMPTY_WEIGHT))
         print(
             "\nSeed complete.\n"
             f"  Login : {DEMO_EMAIL}\n"
             f"  Pass  : {DEMO_PASSWORD}\n"
             f"  Device: {DEVICE_CODE}\n"
-            f"  Remaining LPG: {remaining:.2f} kg "
-            f"({remaining / float(CAPACITY) * 100:.1f}%)"
+            f"  Remaining LPG: {final_remaining:.2f} kg "
+            f"({final_remaining / float(CAPACITY) * 100:.1f}%)"
         )
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(guarded(main))
