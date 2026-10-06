@@ -109,6 +109,18 @@ def create_app() -> FastAPI:
         *object* for errors raised inside a field_validator, which is not JSON
         serialisable and would turn a bad email into a 500.
         """
+        if request.url.path.startswith("/api/iot/"):
+            # Spec §53: a rejected sensor packet is logged, not silently dropped - it
+            # is usually the first sign of a miscalibrated load cell or a bad device
+            # clock. Field names and messages only, never the payload.
+            logger.warning(
+                "rejected packet on %s: %s",
+                request.url.path,
+                [
+                    f"{'.'.join(str(part) for part in error.get('loc', ()))}: {error.get('msg')}"
+                    for error in exc.errors()
+                ],
+            )
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             content={

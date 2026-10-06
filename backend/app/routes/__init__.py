@@ -10,9 +10,11 @@ from app.routes import (
     consumption,
     dashboard,
     history,
+    iot,
     prediction,
     safety,
     settings,
+    ws,
 )
 
 # Order is the order they appear in /docs.
@@ -25,6 +27,8 @@ ROUTERS = [
     history.router,
     alerts.router,
     settings.router,
+    iot.router,
+    ws.router,
 ]
 
 __all__ = ["ROUTERS"]

@@ -141,6 +141,9 @@ def cylinder(db, owner) -> Cylinder:
             is_read=False,
         )
     )
+    # A past incident that was resolved, mirroring the real seed data. The cylinder
+    # therefore starts *not* in alarm, which is what lets the ingest tests exercise
+    # the safe -> exceeded transition.
     db.add(
         SafetyEvent(
             cylinder_id=cyl.id,
@@ -149,6 +152,18 @@ def cylinder(db, owner) -> Cylinder:
             buzzer_status="ON",
             relay_status="ACTIVATED",
             event_type="LEAK_SUSPECTED",
+            created_at=now - timedelta(days=2),
+        )
+    )
+    db.add(
+        SafetyEvent(
+            cylinder_id=cyl.id,
+            gas_value=240,
+            threshold=700,
+            buzzer_status="OFF",
+            relay_status="NORMAL",
+            event_type="CLEARED",
+            created_at=now - timedelta(days=2) + timedelta(hours=1),
         )
     )
     db.flush()

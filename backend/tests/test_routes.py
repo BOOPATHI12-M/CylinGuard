@@ -123,13 +123,13 @@ def test_safety_reports_recorded_actuator_state(client, cylinder, auth):
     """Buzzer and relay come from the recorded event, never inferred from gas."""
     body = client.get(f"/api/safety/{cylinder.id}", headers=auth).json()
 
-    # Latest reading is a safe 190, but the last recorded event left the relay
-    # activated. The endpoint must report what was recorded, not what it would
-    # guess from the current reading.
+    # The fixture holds a leak that was later cleared. The endpoint must report the
+    # state of the *latest* event, and still list the incident in history.
     assert body["gas"]["status"] == "SAFE"
-    assert body["buzzer_status"] == "ON"
-    assert body["relay_status"] == "ACTIVATED"
-    assert body["events"][0]["event_type"] == "LEAK_SUSPECTED"
+    assert body["buzzer_status"] == "OFF"
+    assert body["relay_status"] == "NORMAL"
+    assert body["events"][0]["event_type"] == "CLEARED"
+    assert [e["event_type"] for e in body["events"]] == ["CLEARED", "LEAK_SUSPECTED"]
 
 
 # --- alerts --------------------------------------------------------------

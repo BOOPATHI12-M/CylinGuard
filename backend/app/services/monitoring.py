@@ -214,3 +214,73 @@ def history_page(
         ).scalars()
     )
     return rows, total
+
+
+def build_dashboard(db: Session, cylinder: Cylinder):
+    """Assemble the whole dashboard payload, or None if nothing has been measured.
+
+    Lives here rather than in the route so the REST response and the WebSocket frame
+    are produced by the same code. If they were built separately they would drift,
+    and the frontend would have to handle two shapes for one screen.
+    """
+    from datetime import datetime
+
+    from app.config import settings as app_settings
+    from app.schemas.monitoring import (
+        AlertResponse,
+        ConsumptionSummary,
+        CylinderInfo,
+        DashboardResponse,
+        DeviceInfo,
+        GasStatus,
+        LpgStatus,
+        PredictionResponse,
+    )
+
+    reading = latest_reading(db, cylinder.id)
+    if reading is None:
+        return None
+
+    setting = get_settings_row(db, cylinder.id)
+    device = get_device(db, cylinder.id)
+    prediction = latest_prediction(db, cylinder.id)
+    now = datetime.now()
+
+    device_info = None
+    if device is not None:
+        device_info = DeviceInfo(
+            device_code=device.device_code,
+            status=device.status_at(now, app_settings.device_offline_seconds),
+            wifi_status=device.wifi_status,
+            last_seen=device.last_seen,
+            firmware_version=device.firmware_version,
+        )
+
+    prediction_out = None
+    if prediction is not None:
+        prediction_out = PredictionResponse(
+            timestamp=prediction.timestamp,
+            remaining_kg=prediction.remaining_kg,
+            remaining_days=prediction.remaining_days,
+            predicted_depletion_date=prediction.predicted_depletion_date,
+            confidence=prediction.confidence,
+            method=prediction.method,
+            sample_count=prediction.sample_count,
+            is_estimate=prediction.method != "ML",
+        )
+
+    return DashboardResponse(
+        cylinder=CylinderInfo.model_validate(cylinder),
+        device=device_info,
+        lpg=LpgStatus(**lpg_view(cylinder, reading, setting)),
+        gas=GasStatus(**gas_view(reading, setting)),
+        consumption=ConsumptionSummary(**consumption_summary(db, cylinder.id)),
+        prediction=prediction_out,
+        unread_alerts=unread_alert_count(db, cylinder.id),
+        recent_alerts=[
+            AlertResponse.model_validate(a) for a in recent_alerts(db, cylinder.id)
+        ],
+        demo_mode=bool(setting.demo_mode) if setting else app_settings.demo_mode_default,
+        # Same clock as every other timestamp in the payload; see decision 13.
+        generated_at=now,
+    )
