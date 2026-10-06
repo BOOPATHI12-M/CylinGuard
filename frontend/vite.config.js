@@ -20,6 +20,17 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: false,
+    rollupOptions: {
+      output: {
+        // Recharts plus its d3 dependencies are about half the bundle and are only
+        // needed on the pages that draw charts. Splitting them keeps the first paint -
+        // which includes the login form and the emergency banner - small.
+        manualChunks: {
+          react: ['react', 'react-dom', 'react-router-dom'],
+          charts: ['recharts'],
+        },
+      },
+    },
   },
   test: {
     environment: 'jsdom',

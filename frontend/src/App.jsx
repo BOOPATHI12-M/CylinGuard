@@ -11,6 +11,7 @@ import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 
 import { useAuth } from './context/AuthContext'
 import { AppLayout } from './layouts/AppLayout'
+import { Dashboard } from './pages/Dashboard'
 import { Login } from './pages/Login'
 import { Placeholder } from './pages/Placeholder'
 import { Register } from './pages/Register'
@@ -37,7 +38,6 @@ function ProtectedRoute({ children }) {
 }
 
 const FEATURE_PAGES = [
-  { path: 'dashboard', title: 'Dashboard', note: 'The hero cylinder, live sensor cards, consumption chart, prediction and safety panels.' },
   { path: 'consumption', title: 'Consumption', note: 'Today, 7-day, 30-day and monthly totals with the 7D / 30D / 3M chart tabs.' },
   { path: 'prediction', title: 'Prediction', note: 'Radial confidence, days remaining and the depletion date, badged ESTIMATE until the model is trained in phase 6.' },
   { path: 'safety', title: 'Safety', note: 'The large state indicator, gas value against its threshold, commanded buzzer and relay state, and the event history.' },
@@ -59,6 +59,7 @@ export default function App() {
           </ProtectedRoute>
         }
       >
+        <Route path="dashboard" element={<Dashboard />} />
         {FEATURE_PAGES.map(({ path, title, note }) => (
           <Route key={path} path={path} element={<Placeholder title={title} note={note} />} />
         ))}

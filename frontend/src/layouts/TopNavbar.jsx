@@ -8,6 +8,7 @@
 
 import { LogOut, Menu } from 'lucide-react'
 
+import { CylinderSelector } from '../components/CylinderSelector'
 import { DemoBadge } from '../components/StatusBadge'
 import { useAuth } from '../context/AuthContext'
 
@@ -26,9 +27,9 @@ export function TopNavbar({ onOpenNav, title, demoMode }) {
           <Menu aria-hidden="true" className="h-5 w-5" />
         </button>
 
-        <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-ink sm:text-lg">
-          {title}
-        </h1>
+        <h1 className="min-w-0 truncate text-base font-semibold text-ink sm:text-lg">{title}</h1>
+
+        <CylinderSelector className="min-w-0 flex-1" />
 
         {demoMode ? <DemoBadge className="hidden sm:inline-flex" /> : null}
 

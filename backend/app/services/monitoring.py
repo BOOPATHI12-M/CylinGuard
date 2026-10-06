@@ -244,6 +244,11 @@ def build_dashboard(db: Session, cylinder: Cylinder):
     setting = get_settings_row(db, cylinder.id)
     device = get_device(db, cylinder.id)
     prediction = latest_prediction(db, cylinder.id)
+    # Imported here rather than at module scope: safety imports models, and a top-level
+    # import would make monitoring and safety depend on each other.
+    from app.services.safety import commanded_state
+
+    buzzer, relay = commanded_state(db, cylinder.id)
     now = datetime.now()
 
     device_info = None
@@ -280,6 +285,11 @@ def build_dashboard(db: Session, cylinder: Cylinder):
         recent_alerts=[
             AlertResponse.model_validate(a) for a in recent_alerts(db, cylinder.id)
         ],
+        buzzer_status=buzzer,
+        relay_status=relay,
+        refill_threshold_days=int(setting.prediction_threshold) if setting else 5,
+        low_lpg_threshold=setting.low_lpg_threshold if setting else Decimal("20.00"),
+        critical_lpg_threshold=setting.critical_lpg_threshold if setting else Decimal("10.00"),
         demo_mode=bool(setting.demo_mode) if setting else app_settings.demo_mode_default,
         # Same clock as every other timestamp in the payload; see decision 13.
         generated_at=now,

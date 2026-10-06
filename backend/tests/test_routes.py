@@ -242,3 +242,15 @@ def test_a_cylinder_with_no_readings_reports_null_not_zero(client, db, owner, au
 
 def test_listing_cylinders_requires_a_token(client):
     assert client.get("/api/cylinders").status_code == 401
+
+
+def test_dashboard_carries_the_thresholds_and_commanded_state(client, cylinder, auth):
+    """Phase 5 additions, so the banner and refill card need no second request."""
+    body = client.get(f"/api/dashboard/{cylinder.id}", headers=auth).json()
+
+    assert body["refill_threshold_days"] == 5
+    assert body["low_lpg_threshold"] == 20.0
+    assert body["critical_lpg_threshold"] == 10.0
+    # The fixture's latest safety event is the CLEARED one.
+    assert body["buzzer_status"] == "OFF"
+    assert body["relay_status"] == "NORMAL"

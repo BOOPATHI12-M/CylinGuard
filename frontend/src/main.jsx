@@ -5,6 +5,7 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import { ToastProvider } from './components/ToastNotification'
 import { AuthProvider } from './context/AuthContext'
+import { CylinderProvider } from './context/CylinderContext'
 import './index.css'
 
 // Provider order matters: AuthProvider signs the user out on a rejected token, and the
@@ -14,7 +15,11 @@ createRoot(document.getElementById('root')).render(
     <BrowserRouter>
       <ToastProvider>
         <AuthProvider>
-          <App />
+          {/* Inside AuthProvider: the cylinder list is per user and must reload when the
+              signed-in user changes. */}
+          <CylinderProvider>
+            <App />
+          </CylinderProvider>
         </AuthProvider>
       </ToastProvider>
     </BrowserRouter>

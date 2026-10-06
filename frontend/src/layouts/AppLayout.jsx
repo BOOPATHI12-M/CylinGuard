@@ -15,18 +15,20 @@
 import { useEffect, useState } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 
+import { EmptyState, ErrorState } from '../components/EmptyState'
+import { LoadingSkeleton } from '../components/LoadingSkeleton'
+import { useCylinders } from '../context/CylinderContext'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { Sidebar, NAV_ITEMS } from './Sidebar'
 import { TopNavbar } from './TopNavbar'
 
-// Phase 2a/2b expose a cylinder by id and there is no cylinder-picker endpoint yet, so
-// the shell watches the user's first cylinder. Phase 5 replaces this with a selector.
-export const ACTIVE_CYLINDER_ID = 1
-
 export function AppLayout() {
   const [navOpen, setNavOpen] = useState(false)
   const location = useLocation()
-  const { frame, status } = useWebSocket(ACTIVE_CYLINDER_ID)
+  const { activeId, loading, error, isEmpty, refresh } = useCylinders()
+  // Passing null before the list resolves means no socket is opened for a cylinder we
+  // have not confirmed the user owns.
+  const { frame, status } = useWebSocket(activeId)
 
   // Close the drawer on navigation, or it stays open over the page the user chose.
   useEffect(() => setNavOpen(false), [location.pathname])
@@ -69,7 +71,22 @@ export function AppLayout() {
           {/* max-w plus min-w-0 on the flex parents is what keeps wide tables from
               forcing horizontal scroll on the whole page at 360px. */}
           <div className="mx-auto w-full max-w-6xl">
-            <Outlet context={{ cylinderId: ACTIVE_CYLINDER_ID, frame, socketStatus: status }} />
+            {loading ? (
+              <LoadingSkeleton lines={3} label="Loading your cylinders" />
+            ) : error ? (
+              <ErrorState
+                title="Could not load your cylinders"
+                description={error.message}
+                onRetry={refresh}
+              />
+            ) : isEmpty ? (
+              <EmptyState
+                title="No cylinders on this account"
+                description="A cylinder and its ESP32 are registered by the operator during setup. Once one exists, it appears here."
+              />
+            ) : (
+              <Outlet context={{ cylinderId: activeId, frame, socketStatus: status }} />
+            )}
           </div>
         </main>
       </div>

@@ -173,6 +173,16 @@ class DashboardResponse(BaseModel):
     prediction: Optional[PredictionResponse]
     unread_alerts: int
     recent_alerts: List[AlertResponse]
+    # Last *commanded* actuator state, from the most recent safety event. Carried on the
+    # dashboard so the emergency banner does not need a second request in exactly the
+    # moment a leak is being reported. Never a confirmed physical shutoff.
+    buzzer_status: str
+    relay_status: str
+    # The user's own thresholds, so the refill card and the level badge can explain
+    # themselves without fetching /api/settings separately.
+    refill_threshold_days: int
+    low_lpg_threshold: float
+    critical_lpg_threshold: float
     demo_mode: bool
     generated_at: datetime
 
