@@ -9,6 +9,7 @@ from app.routes import (
     auth,
     consumption,
     dashboard,
+    demo,
     history,
     iot,
     prediction,
@@ -27,6 +28,7 @@ ROUTERS = [
     history.router,
     alerts.router,
     settings.router,
+    demo.router,
     iot.router,
     ws.router,
 ]

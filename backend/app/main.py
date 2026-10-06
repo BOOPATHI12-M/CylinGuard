@@ -6,6 +6,7 @@ unexpected exception is logged in full on the server and answered with a generic
 use and often the SQL.
 """
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -15,10 +16,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
+from starlette.concurrency import run_in_threadpool
 
 from app.config import settings
 from app.database import engine
 from app.routes import ROUTERS
+from app.services import device_health, simulator
 
 logger = logging.getLogger("cylinguard")
 
@@ -59,8 +62,39 @@ async def lifespan(app: FastAPI):
             f"cannot reach the database on startup: {exc.orig if hasattr(exc, 'orig') else exc}"
         ) from exc
 
+    # Background loops. Both are cancelled on shutdown; neither runs under the test
+    # client, which does not execute the lifespan, so tests drive them directly.
+    simulator.start()
+    sweep = asyncio.create_task(_sweep_forever(), name="device-offline-sweep")
+
     yield
+
+    sweep.cancel()
+    try:
+        await sweep
+    except asyncio.CancelledError:
+        pass
+    await simulator.stop()
     engine.dispose()
+
+
+async def _sweep_forever() -> None:
+    """Mark devices offline that have stopped reporting (spec §33)."""
+    interval = max(5, settings.device_sweep_seconds)
+    logger.info("device offline sweep started, every %ss", interval)
+    try:
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                raised = await run_in_threadpool(device_health.sweep_once)
+                if raised:
+                    logger.info("offline sweep raised %d alert(s)", raised)
+            except Exception:
+                # One failed sweep must not end the loop for the process lifetime.
+                logger.exception("device offline sweep failed")
+    except asyncio.CancelledError:
+        logger.info("device offline sweep stopped")
+        raise
 
 
 def create_app() -> FastAPI:

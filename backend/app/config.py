@@ -66,6 +66,12 @@ class Settings(BaseSettings):
     # --- Demo mode ---
     demo_mode_default: bool = True
     demo_tick_seconds: int = 5
+    # Process-level kill switch for the background simulator, separate from the
+    # per-cylinder settings.demo_mode. Off by default: a loop that writes rows to the
+    # database on every server start should be opted into, not inherited.
+    demo_simulator_enabled: bool = False
+    # How often the device-offline sweep runs.
+    device_sweep_seconds: int = 30
 
     @field_validator("cors_origins", mode="before")
     @classmethod

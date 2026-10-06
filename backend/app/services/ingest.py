@@ -34,7 +34,8 @@ from app.models import (
     SensorReading,
 )
 from app.schemas.ingest import SensorPacket
-from app.services import anomaly, consumption, lpg, monitoring, safety
+from app.config import settings
+from app.services import anomaly, consumption, demo_state, lpg, monitoring, safety
 
 logger = logging.getLogger("cylinguard.ingest")
 
@@ -139,8 +140,16 @@ def _upsert_prediction(
     return existing
 
 
-def process(db: Session, packet: SensorPacket) -> PipelineOutcome:
-    """Run the pipeline for one validated packet."""
+def process(
+    db: Session, packet: SensorPacket, *, simulated: bool = False
+) -> PipelineOutcome:
+    """Run the pipeline for one validated packet.
+
+    `simulated=True` is passed only by the demo simulator. Everything downstream is
+    identical, so demo data exercises the same smoothing, rules and alerts as real
+    hardware - the single difference is the `is_simulated` flag stored on the reading,
+    which is how a demo number is told from a measurement.
+    """
     # --- 2. resolve device -------------------------------------------------
     device, cylinder = resolve_device(db, packet.device_id)
     setting = monitoring.get_settings_row(db, cylinder.id)
@@ -156,16 +165,31 @@ def process(db: Session, packet: SensorPacket) -> PipelineOutcome:
 
     # --- 3. store the reading ---------------------------------------------
     when = packet.timestamp or datetime.now()
+
+    # Was the device considered offline *before* this packet landed? Read now,
+    # because updating last_seen below destroys the evidence.
+    was_offline = (
+        device.status_at(datetime.now(), settings.device_offline_seconds) == "OFFLINE"
+    )
+
     reading = SensorReading(
         cylinder_id=cylinder.id,
         timestamp=when,
         total_weight_kg=Decimal(f"{packet.total_weight_kg:.3f}"),
         gas_sensor_value=packet.gas_sensor_value,
         device_status="ONLINE",
-        # A packet that reached this endpoint came from outside the simulator.
-        is_simulated=False,
+        is_simulated=simulated,
     )
     db.add(reading)
+
+    if not simulated:
+        # Genuine hardware takes precedence over the simulator, permanently for this
+        # process. See app/services/demo_state.py for why suspension is sticky.
+        if demo_state.note_real_packet(cylinder.id):
+            logger.info(
+                "cylinder=%s real packet received - demo simulation suspended",
+                cylinder.id,
+            )
 
     device.last_seen = when
     if packet.wifi_status:
@@ -263,6 +287,21 @@ def process(db: Session, packet: SensorPacket) -> PipelineOutcome:
                         if level_status == lpg.CRITICAL
                         else "Plan a refill."
                     )
+                ),
+            )
+        )
+
+    # A device that had gone quiet is back. Raised here rather than in the sweep
+    # because arriving data *is* the transition, and only a real packet counts.
+    if was_offline and not simulated:
+        alerts.append(
+            Alert(
+                cylinder_id=cylinder.id,
+                type="DEVICE_ONLINE",
+                severity=AlertSeverity.INFO,
+                message=(
+                    f"Device {device.device_code} is reporting again after being "
+                    "offline."
                 ),
             )
         )
