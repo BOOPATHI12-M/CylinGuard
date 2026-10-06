@@ -267,13 +267,22 @@ def main() -> int:
         refill_day = next(
             (r.timestamp for r, _, did in readings if did), now - timedelta(days=12)
         )
+        # Measure the refill rather than quoting a literal: the alert text is a
+        # number a user reads, and the product rule is that no displayed figure is
+        # invented. Largest positive step between consecutive true weights.
+        refill_kg = max(
+            (b - a for (_, a, _), (_, b, _) in zip(readings, readings[1:])),
+            default=0.0,
+        )
         db.add_all(
             [
                 Alert(
                     cylinder_id=cylinder.id,
                     type="REFILL_DETECTED",
                     severity=AlertSeverity.INFO,
-                    message="Cylinder refill detected - weight increased by 5.2 kg.",
+                    message=(
+                        f"Cylinder refill detected - weight increased by {refill_kg:.2f} kg."
+                    ),
                     is_read=True,
                     created_at=refill_day,
                 ),

@@ -5,10 +5,10 @@ here. No module should call os.getenv directly.
 """
 
 from functools import lru_cache
-from typing import List
+from typing import Annotated, List
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -33,7 +33,14 @@ class Settings(BaseSettings):
     jwt_secret: str = Field(default="change_this_secret")
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 1440
-    cors_origins: List[str] = Field(default_factory=lambda: ["http://localhost"])
+    # NoDecode is required, not cosmetic: pydantic-settings JSON-decodes complex
+    # types (List, dict, ...) inside DotEnvSettingsSource *before* any validator
+    # runs, so the comma-separated CORS_ORIGINS that .env.example ships would die
+    # with a JSONDecodeError before _split_origins below ever saw it. NoDecode
+    # hands the raw string to the validator instead.
+    cors_origins: Annotated[List[str], NoDecode] = Field(
+        default_factory=lambda: ["http://localhost"]
+    )
 
     # --- Device / IoT ---
     # Optional shared secret the ESP32 sends as X-Device-Key. Blank disables the check.
