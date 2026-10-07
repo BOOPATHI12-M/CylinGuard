@@ -8,3 +8,6 @@ venv/
 .env
 .env.local
 app/ml/artifacts/
+# Tests and local tooling are not needed in a runtime image.
+tests/
+pytest.ini

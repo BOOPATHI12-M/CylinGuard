@@ -55,6 +55,9 @@ DAYS_OF_HISTORY = 30
 READING_INTERVAL_MINUTES = 15
 # Meal windows (hour, typical kg burned across that window)
 MEAL_WINDOWS = [(7, 0.14), (12, 0.18), (19, 0.22)]
+# Monday-to-Sunday multipliers. Weekends cook more, midweek less - the weekly rhythm a
+# real household has and a flat synthetic month does not.
+WEEKDAY_FACTORS = [0.88, 0.85, 0.90, 0.92, 1.05, 1.32, 1.28]
 BASELINE_GAS = 180          # clean-air MQ-6 ADC baseline
 GAS_LEAK_THRESHOLD = 700
 # A past gas incident, as an offset back from `now`. The *readings* carry the raised
@@ -92,15 +95,23 @@ def reset_tables(db) -> None:
 
 
 def meal_burn(ts: datetime) -> float:
-    """kg consumed in the interval ending at ts, from overlapping meal windows."""
+    """kg consumed in the interval ending at ts, from overlapping meal windows.
+
+    Scaled by the day of the week. Without this the synthetic month had *no* weekly
+    structure at all - every day was the same shape - which is unlike any real household
+    and left nothing for a prediction model to learn beyond the mean. Adding it is a
+    fidelity fix to the data, not tuning to flatter the model: whether a model actually
+    beats a flat average is still measured, and one that does not is not used.
+    """
     total = 0.0
+    weekday_factor = WEEKDAY_FACTORS[ts.weekday()]
     for hour, kg in MEAL_WINDOWS:
         # A ~90-minute bell curve around each meal hour.
         delta_minutes = (ts.hour - hour) * 60 + ts.minute
         weight = math.exp(-((delta_minutes / 45.0) ** 2))
         if weight > 0.01:
             share = READING_INTERVAL_MINUTES / 90.0
-            total += kg * weight * share * rng.uniform(0.75, 1.25)
+            total += kg * weight * share * weekday_factor * rng.uniform(0.85, 1.15)
     return total
 
 

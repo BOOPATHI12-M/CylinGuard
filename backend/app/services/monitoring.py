@@ -269,9 +269,12 @@ def build_dashboard(db: Session, cylinder: Cylinder):
     prediction = latest_prediction(db, cylinder.id)
     # Imported here rather than at module scope: safety imports models, and a top-level
     # import would make monitoring and safety depend on each other.
+    from app.schemas.monitoring import RefillRecommendation
+    from app.services import refill as refill_service
     from app.services.safety import commanded_state
 
     buzzer, relay = commanded_state(db, cylinder.id)
+    threshold_days = int(setting.prediction_threshold) if setting else 5
     now = datetime.now()
 
     device_info = None
@@ -297,12 +300,15 @@ def build_dashboard(db: Session, cylinder: Cylinder):
             is_estimate=prediction.method != "ML",
         )
 
+    lpg_values = lpg_view(cylinder, reading, setting)
+    summary = consumption_summary(db, cylinder.id)
+
     return DashboardResponse(
         cylinder=CylinderInfo.model_validate(cylinder),
         device=device_info,
-        lpg=LpgStatus(**lpg_view(cylinder, reading, setting)),
+        lpg=LpgStatus(**lpg_values),
         gas=GasStatus(**gas_view(reading, setting)),
-        consumption=ConsumptionSummary(**consumption_summary(db, cylinder.id)),
+        consumption=ConsumptionSummary(**summary),
         prediction=prediction_out,
         unread_alerts=unread_alert_count(db, cylinder.id),
         recent_alerts=[
@@ -310,7 +316,17 @@ def build_dashboard(db: Session, cylinder: Cylinder):
         ],
         buzzer_status=buzzer,
         relay_status=relay,
-        refill_threshold_days=int(setting.prediction_threshold) if setting else 5,
+        refill_threshold_days=threshold_days,
+        refill=RefillRecommendation(
+            **vars(
+                refill_service.recommend(
+                    percentage=lpg_values["percentage"],
+                    days_remaining=prediction.remaining_days if prediction else None,
+                    threshold_days=threshold_days,
+                    average_daily_kg=summary["average_daily_kg"],
+                )
+            )
+        ),
         low_lpg_threshold=setting.low_lpg_threshold if setting else Decimal("20.00"),
         critical_lpg_threshold=setting.critical_lpg_threshold if setting else Decimal("10.00"),
         demo_mode=bool(setting.demo_mode) if setting else app_settings.demo_mode_default,

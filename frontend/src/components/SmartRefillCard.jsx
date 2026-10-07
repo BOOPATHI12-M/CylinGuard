@@ -36,16 +36,21 @@ function writeIntent(cylinderId, value) {
   }
 }
 
-export function SmartRefillCard({ cylinderId, prediction, percentage, threshold, className = '' }) {
+export function SmartRefillCard({ cylinderId, prediction, recommendation, className = '' }) {
   const [intent, setIntent] = useState(null)
 
   useEffect(() => {
     setIntent(readIntent(cylinderId))
   }, [cylinderId])
 
-  const days = prediction?.remaining_days ?? null
+  const days = recommendation?.days_remaining ?? prediction?.remaining_days ?? null
   const depletion = prediction?.predicted_depletion_date ?? null
-  const dueSoon = days !== null && threshold !== undefined && days <= threshold
+  // The urgency comes from the backend, not from re-deciding it here. The dashboard, this
+  // card and any future notification all have to agree on what counts as due, and three
+  // copies of the rule would drift.
+  const urgency = recommendation?.urgency ?? 'NOT_NEEDED'
+  const dueSoon = recommendation?.should_refill ?? false
+  const urgent = urgency === 'URGENT'
 
   const record = () => {
     const value = { at: new Date().toISOString() }
@@ -61,39 +66,45 @@ export function SmartRefillCard({ cylinderId, prediction, percentage, threshold,
   return (
     <section
       aria-labelledby="refill-heading"
-      className={`glass p-5 ${dueSoon ? 'shadow-glow-accent' : ''} ${className}`}
+      className={`glass p-5 ${urgent ? 'shadow-glow-danger' : dueSoon ? 'shadow-glow-accent' : ''} ${className}`}
     >
       <div className="flex items-start gap-3">
         <span
           aria-hidden="true"
           className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl2 border ${
-            dueSoon ? 'border-accent/30 bg-accent-soft text-accent' : 'border-hairline text-ink-muted'
+            urgent
+              ? 'border-danger/40 bg-danger-soft text-danger'
+              : dueSoon
+                ? 'border-accent/30 bg-accent-soft text-accent'
+                : 'border-hairline text-ink-muted'
           }`}
         >
           <Truck className="h-4 w-4" />
         </span>
 
         <div className="min-w-0 flex-1">
-          <h2 id="refill-heading" className="text-sm font-semibold text-ink">
-            Smart refill
-          </h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 id="refill-heading" className="text-sm font-semibold text-ink">
+              Smart refill
+            </h2>
+            {urgency !== 'NOT_NEEDED' ? (
+              <span
+                className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${
+                  urgent
+                    ? 'border-danger/30 bg-danger-soft text-danger'
+                    : dueSoon
+                      ? 'border-warn/30 bg-warn-soft text-warn'
+                      : 'border-hairline bg-surface-overlay/70 text-ink-muted'
+                }`}
+              >
+                {urgency.replace(/_/g, ' ')}
+              </span>
+            ) : null}
+          </div>
 
-          {days === null ? (
-            <p className="mt-1 text-sm text-ink-muted">
-              Not enough history yet to recommend a refill date.
-            </p>
-          ) : dueSoon ? (
-            <p className="tabular mt-1 text-sm text-ink">
-              About <span className="font-semibold">{days}</span> days of gas left, at or below your{' '}
-              {threshold}-day threshold. Worth arranging a refill now.
-            </p>
-          ) : (
-            <p className="tabular mt-1 text-sm text-ink-muted">
-              About <span className="font-semibold text-ink">{days}</span> days of gas left
-              {percentage !== null && percentage !== undefined ? ` (${percentage}%)` : ''}. No refill
-              needed yet.
-            </p>
-          )}
+          <p className={`mt-1 text-sm leading-relaxed ${dueSoon ? 'text-ink' : 'text-ink-muted'}`}>
+            {recommendation?.reason ?? 'Not enough history yet to recommend a refill date.'}
+          </p>
 
           {depletion ? (
             <p className="mt-2 flex items-center gap-1.5 text-xs text-ink-muted">

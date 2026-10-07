@@ -13,6 +13,7 @@ from app.routes import (
     demo,
     history,
     iot,
+    ml,
     prediction,
     safety,
     settings,
@@ -31,6 +32,7 @@ ROUTERS = [
     alerts.router,
     settings.router,
     demo.router,
+    ml.router,
     iot.router,
     ws.router,
 ]

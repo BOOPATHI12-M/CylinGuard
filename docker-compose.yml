@@ -1,0 +1,113 @@
+# CylinGuard, four services behind one published port.
+#
+# Only nginx is exposed to the host. mysql, backend and frontend talk over the private
+# compose network, so the browser sees a single origin and the app uses relative paths.
+#
+#   docker compose up --build       start everything
+#   docker compose logs -f backend  follow the API
+#   docker compose down             stop, KEEPING the database volume
+#   docker compose down -v          stop and DESTROY the database -- see the README warning
+#
+# NOT VERIFIED: Docker is not installed on the machine this was written on, so this file has
+# been reviewed against the spec but never run. See PROJECT_STATE §2.
+
+name: cylinguard
+
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-cylinguard}
+      MYSQL_USER: ${MYSQL_USER:-cylinguard_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      # Named volume, so the data survives `docker compose down`. It does NOT survive
+      # `down -v`.
+      - cylinguard_mysql_data:/var/lib/mysql
+      # Applied once, on an empty data directory only. Read-only: the container has no reason
+      # to modify the schema it was handed.
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      # mysqladmin ping, not a TCP check: the port accepts connections well before the server
+      # is ready to answer queries, and the backend would crash-loop in that window.
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    networks: [cylinguard_network]
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        # Not merely "started". The app's lifespan checks the database and refuses to boot
+        # without it, so starting early would be a guaranteed crash-loop.
+        condition: service_healthy
+    environment:
+      # The service name is the host inside the network -- never 127.0.0.1, which in a
+      # container means the container itself.
+      DATABASE_URL: mysql+pymysql://${MYSQL_USER:-cylinguard_user}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-cylinguard}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env - the app refuses to start on the placeholder}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-1440}
+      # Same-origin behind nginx, so the browser's Origin is the published host.
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost}
+      DEVICE_API_KEY: ${DEVICE_API_KEY:-}
+      DEVICE_OFFLINE_SECONDS: ${DEVICE_OFFLINE_SECONDS:-120}
+      MIN_MEANINGFUL_DELTA_KG: ${MIN_MEANINGFUL_DELTA_KG:-0.02}
+      REFILL_DELTA_KG: ${REFILL_DELTA_KG:-2.0}
+      SMOOTHING_WINDOW: ${SMOOTHING_WINDOW:-5}
+      DEMO_MODE_DEFAULT: ${DEMO_MODE_DEFAULT:-true}
+      DEMO_SIMULATOR_ENABLED: ${DEMO_SIMULATOR_ENABLED:-false}
+      DEMO_TICK_SECONDS: ${DEMO_TICK_SECONDS:-5}
+      DEVICE_SWEEP_SECONDS: ${DEVICE_SWEEP_SECONDS:-30}
+      DEBUG: ${DEBUG:-false}
+    volumes:
+      # The trained model is written at runtime and should outlive a rebuild - otherwise
+      # every deploy silently drops back to the arithmetic estimate.
+      - cylinguard_ml_artifacts:/app/app/ml/artifacts
+    networks: [cylinguard_network]
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Empty on purpose: the app then uses same-origin relative paths, which nginx routes.
+        # Vite inlines these at build time, so they cannot be changed on a running container.
+        VITE_API_URL: ${VITE_API_URL:-}
+        VITE_WS_URL: ${VITE_WS_URL:-}
+    restart: unless-stopped
+    networks: [cylinguard_network]
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on: [backend, frontend]
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks: [cylinguard_network]
+
+volumes:
+  cylinguard_mysql_data:
+  cylinguard_ml_artifacts:
+
+networks:
+  cylinguard_network:
+    driver: bridge

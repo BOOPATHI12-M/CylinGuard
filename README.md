@@ -376,25 +376,79 @@ Fixed random seed, so the demo is identical every run.
 CylinGuard runs as four containers — `frontend`, `backend`, `mysql`, `nginx` — on a shared
 `cylinguard_network`, with MySQL on a persistent `cylinguard_mysql_data` volume.
 
+> **Not yet verified.** The compose stack was written and reviewed against the spec on a machine
+> with no Docker installed, so `docker compose up --build` has never actually run. Expect to fix
+> something the first time. The no-Docker path below *is* verified and is what the project has been
+> developed against.
+
+### Before the first run
+
+`.env` must exist at the repository root with at least `MYSQL_ROOT_PASSWORD`, `MYSQL_PASSWORD` and
+`JWT_SECRET` — compose refuses to start without them, and the backend refuses to boot on the
+placeholder secret. The quickest way to get a valid file is to run the local bootstrap once:
+
 ```bash
-docker compose up --build     # build and start
-docker compose up -d          # start in the background
-docker compose logs -f        # follow logs
-docker compose ps             # list containers
-docker compose down           # stop (database survives)
+cd backend
+MYSQL_PASSWORD="choose-one" python scripts/bootstrap_mysql.py   # writes ../.env for you
 ```
 
-Then open **http://localhost** for the dashboard, and **http://localhost/docs** for the API
+Then add `MYSQL_ROOT_PASSWORD` to that file by hand — the bootstrap deliberately never writes an
+admin password to disk.
+
+### Commands
+
+| Command | What it does |
+| --- | --- |
+| `docker compose up --build` | Build images and start all four services in the foreground |
+| `docker compose up -d` | Same, detached |
+| `docker compose ps` | List services and their health |
+| `docker compose logs -f backend` | Follow one service's logs |
+| `docker compose exec backend python scripts/seed.py --reset` | Rebuild the demo dataset |
+| `docker compose restart backend` | Restart the API after an env change |
+| `docker compose down` | Stop everything. **The database survives.** |
+| `docker compose down -v` | Stop and **delete the volumes** — see the warning below |
+
+Then open **http://localhost** for the dashboard and **http://localhost/docs** for the API
 reference.
 
-> **`docker compose down -v` deletes the MySQL volume and every reading you have collected.**
-> Plain `docker compose down` is the safe one.
+> ### ⚠️ `docker compose down -v` destroys your data
+> The `-v` flag deletes the `cylinguard_mysql_data` volume — every reading, every alert, every
+> consumption record — and `cylinguard_ml_artifacts`, so any trained model goes too. There is no
+> undo and no prompt. Plain `docker compose down` is the safe one; use `-v` only when you
+> deliberately want a clean slate.
 
-NGINX routes `/` to the React build, `/api/` to the backend, and `/ws/` to the WebSocket endpoint
-with the correct upgrade headers — so the browser only ever talks to port 80.
+### How the pieces fit
+
+NGINX is the only service published to the host. It routes `/` to the React build, `/api/` to the
+backend, `/ws/` to the WebSocket endpoint with the `Upgrade`/`Connection` handshake headers, and
+`/health` explicitly — that last one matters, because without its own rule `/health` falls through
+to the single-page app and returns the HTML shell with a **200**, giving you a health check that
+can never fail.
+
+The backend waits for MySQL to report healthy before it starts, via `mysqladmin ping` rather than a
+port check: the port accepts connections well before the server will answer a query, and the API
+fails fast on an unreachable database by design.
+
+The schema is applied by the MySQL container from `database/schema.sql` on first start. Demo data
+is seeded by `scripts/seed.py`, which is idempotent, so it runs on every container start without
+duplicating anything. `database/seed.sql` is a **generated** plain-SQL copy of that data for anyone
+who wants it without Python — regenerate it with `python backend/scripts/export_seed.py`, and never
+edit it by hand.
 
 The ESP32 is physical hardware and is **not** containerised. It reaches the server over the local
-network.
+network — point `API_BASE` in the sketch at the host's LAN address, not `localhost`, which inside
+the ESP32 means the ESP32.
+
+### Running the tests
+
+```bash
+cd backend  && python -m pytest                      # 179 tests
+cd frontend && npm test                              # 48 tests
+cd backend  && python scripts/check_schema_parity.py # models vs schema.sql, no database needed
+```
+
+Backend tests run against the real MySQL schema inside a transaction that is always rolled back, so
+they exercise real constraints and real cascades without leaving a row behind.
 
 ---
 

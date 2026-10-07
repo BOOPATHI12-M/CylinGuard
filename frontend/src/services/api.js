@@ -172,6 +172,11 @@ export const monitoring = {
   updateSettings: (id, patch) => api.put(`/settings/${id}`, patch).then((r) => r.data),
 }
 
+export const ml = {
+  status: () => api.get('/ml/status').then((r) => r.data),
+  train: (id) => api.post(`/ml/train/${id}`).then((r) => r.data),
+}
+
 export const demo = {
   state: (id) => api.get(`/demo/${id}`).then((r) => r.data),
   toggle: (id, enabled) => api.post(`/demo/${id}/toggle`, { enabled }).then((r) => r.data),

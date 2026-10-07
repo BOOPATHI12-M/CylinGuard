@@ -257,8 +257,7 @@ export function Dashboard() {
         <SmartRefillCard
           cylinderId={cylinderId}
           prediction={prediction}
-          percentage={lpg.percentage}
-          threshold={view.refill_threshold_days}
+          recommendation={view.refill}
           className="lg:col-span-2"
         />
         <DeviceStatus device={device} socketStatus={socketStatus} />

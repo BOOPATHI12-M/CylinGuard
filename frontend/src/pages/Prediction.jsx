@@ -17,7 +17,7 @@ import { CardSkeleton } from '../components/LoadingSkeleton'
 import { MetricCard } from '../components/MetricCard'
 import { EstimateBadge } from '../components/StatusBadge'
 import { useResource } from '../hooks/useResource'
-import { monitoring } from '../services/api'
+import { ml, monitoring } from '../services/api'
 
 // Matches ML_MIN_SAMPLES in backend/app/config.py. Shown so the page can explain why
 // it is still an estimate rather than leaving the user to guess.
@@ -31,6 +31,9 @@ export function Prediction() {
     [cylinderId],
     { enabled: Boolean(cylinderId) },
   )
+  // What the model is actually worth. A user shown POWERED BY ML deserves to know what
+  // that bought, and whether the model is even in use.
+  const modelStatus = useResource(() => ml.status(), [])
 
   // A live frame carries the same prediction, so the page keeps up without refetching.
   const prediction = frame?.prediction ?? resource.data
@@ -158,6 +161,110 @@ export function Prediction() {
           a planning aid, not a guarantee.
         </p>
       </section>
+
+      <ModelPanel status={modelStatus} />
     </div>
+  )
+}
+
+
+/**
+ * What the trained model measurably achieves - or why it is not being used.
+ *
+ * The error is shown against the error of simply predicting the historical mean, because
+ * "MAE 0.03 kg/day" alone is unreadable and sounds impressive either way. A model that
+ * loses to that average is reported as trained-but-idle rather than hidden: the backend
+ * keeps serving the arithmetic estimate, and this panel says so.
+ */
+function ModelPanel({ status }) {
+  if (status.loading || status.error || !status.data) return null
+
+  const { trained, in_use: inUse, beats_baseline: beats, report, min_samples_required: minSamples } =
+    status.data
+
+  if (!trained) {
+    return (
+      <section aria-labelledby="model-heading" className="glass p-5">
+        <h2 id="model-heading" className="text-sm font-semibold text-ink">
+          Prediction model
+        </h2>
+        <p className="mt-2 text-sm leading-relaxed text-ink-muted">
+          No model has been trained yet, so every estimate is arithmetic. Training needs at least{' '}
+          {minSamples} complete days of consumption.
+        </p>
+      </section>
+    )
+  }
+
+  const improvement = report?.baseline_mae
+    ? Math.round((1 - report.model_mae / report.baseline_mae) * 100)
+    : null
+
+  return (
+    <section aria-labelledby="model-heading" className="glass p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 id="model-heading" className="text-sm font-semibold text-ink">
+          Prediction model
+        </h2>
+        <span
+          className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${
+            inUse
+              ? 'border-safe/30 bg-safe-soft text-safe'
+              : 'border-hairline bg-surface-overlay/70 text-ink-muted'
+          }`}
+        >
+          {inUse ? 'In use' : 'Trained, not used'}
+        </span>
+      </div>
+
+      {inUse ? (
+        <p className="mt-2 text-sm leading-relaxed text-ink-muted">
+          Trained on {report.sample_count} days. Across {report.folds}-fold cross-validation it is
+          out by <span className="tabular font-semibold text-ink">{report.model_mae}</span> kg/day,
+          against <span className="tabular font-semibold text-ink">{report.baseline_mae}</span> kg/day
+          for simply predicting the historical average
+          {improvement !== null ? <> — about {improvement}% better</> : null}.
+        </p>
+      ) : (
+        <p className="mt-2 text-sm leading-relaxed text-ink-muted">
+          This model cross-validates <span className="tabular">{report.model_mae}</span> kg/day
+          against <span className="tabular">{report.baseline_mae}</span> kg/day for the plain
+          historical average, so the average is the better predictor and is what the estimate uses.
+          Running a model is not by itself a reason to trust it.
+        </p>
+      )}
+
+      {report?.feature_importances ? (
+        <dl className="mt-4 space-y-1.5">
+          {Object.entries(report.feature_importances)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 4)
+            .map(([name, value]) => (
+              <div key={name} className="flex items-center gap-3">
+                <dt className="w-44 shrink-0 truncate text-[11px] text-ink-muted">
+                  {name.replace(/_/g, ' ')}
+                </dt>
+                <dd className="flex min-w-0 flex-1 items-center gap-2">
+                  <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-overlay">
+                    <span
+                      className="block h-full rounded-full bg-accent"
+                      style={{ width: `${Math.round(value * 100)}%` }}
+                    />
+                  </span>
+                  <span className="tabular w-10 shrink-0 text-right text-[11px] text-ink-muted">
+                    {Math.round(value * 100)}%
+                  </span>
+                </dd>
+              </div>
+            ))}
+        </dl>
+      ) : null}
+
+      <p className="mt-3 text-[11px] leading-relaxed text-ink-faint">
+        Cross-validated error on a short history of one household. It describes how well the model
+        fits this data, not how accurately it would forecast a different home. Last trained{' '}
+        {new Date(report.trained_at).toLocaleString()}.
+      </p>
+    </section>
   )
 }

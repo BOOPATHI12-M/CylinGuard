@@ -114,6 +114,79 @@ def estimate(
     )
 
 
+def confidence_from_model(
+    sample_count: int, model_mae: Optional[float], baseline_mae: Optional[float]
+) -> Decimal:
+    """Confidence for the model path, from how much it actually beats the flat average.
+
+    Not a fixed, higher number just because a model ran. A forest that barely improves on
+    predicting the mean has earned barely more confidence than the arithmetic path, and
+    one that is *worse* than the mean earns less. The metrics come from the training
+    report, so this is measured rather than asserted.
+    """
+    if sample_count <= 0:
+        return ZERO
+
+    # Starts where the arithmetic path tops out, so the model can only improve on it.
+    base = Decimal("0.55")
+
+    if not model_mae or not baseline_mae or baseline_mae <= 0:
+        # Trained, but with no usable comparison - claim no more than the fallback would.
+        return base.quantize(Decimal("0.001"))
+
+    # 1.0 means the model is perfect, 0.0 means no better than the mean, negative means
+    # worse. Clamped, then scaled into the headroom above 0.55.
+    improvement = max(0.0, min(1.0, 1.0 - (float(model_mae) / float(baseline_mae))))
+    earned = base + (Decimal("0.90") - base) * Decimal(f"{improvement:.4f}")
+    return earned.quantize(Decimal("0.001"))
+
+
+def estimate_from_daily(
+    remaining_kg: Decimal,
+    predicted_daily_kg: Decimal,
+    sample_count: int,
+    variance: Decimal = ZERO,
+    method: str = ML,
+    model_mae: Optional[float] = None,
+    baseline_mae: Optional[float] = None,
+    now: Optional[datetime] = None,
+) -> Estimate:
+    """Days remaining from a *predicted* daily consumption rather than the historical mean.
+
+    The final division is identical to the arithmetic path, and so are its guards: a
+    near-zero prediction cannot produce infinite days, and the result still fits
+    DECIMAL(6,2). Only the denominator differs - a model's forecast instead of a flat
+    average.
+    """
+    now = now or datetime.now()
+    remaining = max(ZERO, Decimal(remaining_kg))
+    daily = Decimal(predicted_daily_kg)
+
+    if daily < MIN_USABLE_AVERAGE:
+        # The model predicts effectively no consumption. Reporting 0 days with zero
+        # confidence is honest; "infinite days left" is not.
+        return Estimate(
+            remaining_kg=remaining.quantize(Decimal("0.001")),
+            remaining_days=ZERO.quantize(Decimal("0.01")),
+            predicted_depletion_date=None,
+            confidence=ZERO.quantize(Decimal("0.001")),
+            method=method,
+            sample_count=sample_count,
+        )
+
+    days = min(MAX_DAYS, (remaining / daily)).quantize(Decimal("0.01"))
+    depletion = (now + timedelta(days=float(min(days, Decimal(MAX_DATE_DAYS))))).date()
+
+    return Estimate(
+        remaining_kg=remaining.quantize(Decimal("0.001")),
+        remaining_days=days,
+        predicted_depletion_date=depletion,
+        confidence=confidence_from_model(sample_count, model_mae, baseline_mae),
+        method=method,
+        sample_count=sample_count,
+    )
+
+
 def uses_model(sample_count: int) -> bool:
-    """Whether phase 6 would have enough history to use the trained model."""
+    """Whether there is enough history for the trained model to be used at all."""
     return sample_count >= settings.ml_min_samples

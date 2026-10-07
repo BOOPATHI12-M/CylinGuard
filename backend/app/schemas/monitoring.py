@@ -157,6 +157,18 @@ class HistoryPage(BaseModel):
     pages: int
 
 
+class RefillRecommendation(BaseModel):
+    """Decided server-side so the dashboard, the prediction page and any future
+    notification cannot drift apart on what counts as "due"."""
+
+    # NOT_NEEDED / PLAN_AHEAD / ORDER_NOW / URGENT
+    urgency: str
+    should_refill: bool
+    days_remaining: Optional[float]
+    threshold_days: int
+    reason: str
+
+
 class DashboardResponse(BaseModel):
     """Everything the main screen needs, in one request.
 
@@ -181,6 +193,7 @@ class DashboardResponse(BaseModel):
     # The user's own thresholds, so the refill card and the level badge can explain
     # themselves without fetching /api/settings separately.
     refill_threshold_days: int
+    refill: RefillRecommendation
     low_lpg_threshold: float
     critical_lpg_threshold: float
     demo_mode: bool

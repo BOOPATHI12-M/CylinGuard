@@ -36,6 +36,7 @@ from app.models import (
 from app.schemas.ingest import SensorPacket
 from app.config import settings
 from app.services import anomaly, consumption, demo_state, lpg, monitoring, safety
+from app.services import prediction as prediction_service
 
 logger = logging.getLogger("cylinguard.ingest")
 
@@ -242,8 +243,14 @@ def process(
     buzzer_status, relay_status = safety.commanded_state(db, cylinder.id)
 
     # --- 9. prediction ----------------------------------------------------
-    estimate = predictor.estimate(
+    # Goes through the prediction service rather than straight to the arithmetic
+    # estimator: it uses the trained model when one exists and enough history backs it,
+    # and silently falls back otherwise. `method` on the stored row records which ran.
+    estimate = prediction_service.compute(
+        db,
+        cylinder.id,
         remaining_kg=remaining,
+        empty_weight_kg=cylinder.empty_weight_kg,
         average_daily_kg=average_kg,
         sample_count=samples,
         variance=consumption.consumption_variance(db, cylinder.id),
