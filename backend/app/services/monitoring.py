@@ -187,17 +187,40 @@ def daily_series(db: Session, cylinder_id: int, days: int = 30):
 
 
 def history_page(
-    db: Session, cylinder_id: int, page: int, size: int, since: Optional[datetime] = None
+    db: Session,
+    cylinder_id: int,
+    page: int,
+    size: int,
+    since: Optional[datetime] = None,
+    until: Optional[datetime] = None,
+    device_status: Optional[str] = None,
+    gas_exceeded: Optional[bool] = None,
+    gas_threshold: Optional[int] = None,
 ) -> Tuple[list, int]:
-    """One page of readings, newest first, paginated in SQL.
+    """One page of readings, newest first, filtered and paginated in SQL.
 
-    `sensor_readings` grows without bound - 2,882 rows after one seeded month, and
-    one row every 30 seconds in production. The LIMIT/OFFSET and the COUNT both
-    run in the database; nothing loads the whole table to slice it in Python.
+    `sensor_readings` grows without bound - ~2,880 rows after one seeded month, and one
+    row every 30 seconds in production. The LIMIT/OFFSET, the COUNT *and* every filter
+    run in the database. Filtering the fetched page in the browser instead would be
+    actively misleading: a "gas exceeded" filter that only searched the 50 rows on screen
+    would report nothing wrong on a day that had a leak on page 4.
     """
     where = [SensorReading.cylinder_id == cylinder_id]
     if since is not None:
         where.append(SensorReading.timestamp >= since)
+    if until is not None:
+        where.append(SensorReading.timestamp <= until)
+    if device_status:
+        where.append(SensorReading.device_status == device_status)
+    if gas_exceeded is not None and gas_threshold is not None:
+        # Compared against the threshold as it is *now*. The reading does not store the
+        # threshold that applied when it was taken, so a user who later lowers the
+        # threshold will see more history flagged - which is the honest reading of
+        # "which of these would count as exceeded".
+        if gas_exceeded:
+            where.append(SensorReading.gas_sensor_value >= gas_threshold)
+        else:
+            where.append(SensorReading.gas_sensor_value < gas_threshold)
 
     total = int(
         db.execute(

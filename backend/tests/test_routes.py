@@ -254,3 +254,74 @@ def test_dashboard_carries_the_thresholds_and_commanded_state(client, cylinder, 
     # The fixture's latest safety event is the CLEARED one.
     assert body["buzzer_status"] == "OFF"
     assert body["relay_status"] == "NORMAL"
+
+
+# --- history filters (phase 5b) ------------------------------------------
+
+def test_history_filters_gas_exceeded_in_sql(client, db, cylinder, auth):
+    """Filtering must span the whole table, not just the page on screen.
+
+    A leak on page 4 has to be findable; a browser-side filter over 50 fetched rows
+    would report nothing wrong.
+    """
+    from app.models import SensorReading
+    from datetime import datetime, timedelta
+    from decimal import Decimal
+
+    # One loud reading among the fixture's ten quiet ones.
+    db.add(
+        SensorReading(
+            cylinder_id=cylinder.id,
+            timestamp=datetime.now() - timedelta(days=1),
+            total_weight_kg=Decimal("23.150"),
+            gas_sensor_value=900,
+            device_status="ONLINE",
+            is_simulated=True,
+        )
+    )
+    db.flush()
+
+    loud = client.get(
+        f"/api/history/{cylinder.id}?gas_exceeded=true&size=5", headers=auth
+    ).json()
+    assert loud["total"] == 1
+    assert loud["items"][0]["gas_sensor_value"] == 900
+    assert loud["items"][0]["gas_status"] == "GAS_THRESHOLD_EXCEEDED"
+
+    quiet = client.get(
+        f"/api/history/{cylinder.id}?gas_exceeded=false&size=50", headers=auth
+    ).json()
+    assert quiet["total"] == 10
+    assert all(r["gas_status"] == "SAFE" for r in quiet["items"])
+
+
+def test_history_filters_a_date_window(client, cylinder, auth):
+    from datetime import datetime, timedelta
+
+    # The fixture's readings span the last ~2.5 hours.
+    since = (datetime.now() - timedelta(minutes=40)).isoformat()
+    body = client.get(f"/api/history/{cylinder.id}?since={since}&size=50", headers=auth).json()
+    assert 0 < body["total"] < 10
+
+    future = (datetime.now() + timedelta(days=1)).isoformat()
+    empty = client.get(f"/api/history/{cylinder.id}?since={future}", headers=auth).json()
+    assert empty["total"] == 0
+    # An empty result is still page 1 of 1, not page 1 of 0.
+    assert empty["pages"] == 1
+
+
+def test_history_filters_device_status(client, cylinder, auth):
+    body = client.get(
+        f"/api/history/{cylinder.id}?device_status=online&size=50", headers=auth
+    ).json()
+    assert body["total"] == 10
+
+    offline = client.get(
+        f"/api/history/{cylinder.id}?device_status=OFFLINE", headers=auth
+    ).json()
+    assert offline["total"] == 0
+
+
+def test_history_rejects_an_unknown_device_status(client, cylinder, auth):
+    response = client.get(f"/api/history/{cylinder.id}?device_status=MAYBE", headers=auth)
+    assert response.status_code == 422

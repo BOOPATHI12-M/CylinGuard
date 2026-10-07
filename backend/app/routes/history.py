@@ -11,7 +11,7 @@ table does not duplicate the tare-weight arithmetic in the frontend.
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -31,12 +31,41 @@ def get_history(
     since: Optional[datetime] = Query(
         default=None, description="Only readings at or after this timestamp"
     ),
+    until: Optional[datetime] = Query(
+        default=None, description="Only readings at or before this timestamp"
+    ),
+    device_status: Optional[str] = Query(
+        default=None, description="Filter to ONLINE or OFFLINE"
+    ),
+    gas_exceeded: Optional[bool] = Query(
+        default=None,
+        description="true: only readings at or above the gas threshold; false: only those below",
+    ),
     db: Session = Depends(get_db),
 ) -> HistoryPage:
     setting = monitoring.get_settings_row(db, cylinder.id)
     threshold = int(setting.gas_leakage_threshold) if setting else 700
 
-    rows, total = monitoring.history_page(db, cylinder.id, page, size, since)
+    if device_status is not None:
+        wanted = device_status.strip().upper()
+        if wanted not in ("ONLINE", "OFFLINE"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="device_status must be ONLINE or OFFLINE",
+            )
+        device_status = wanted
+
+    rows, total = monitoring.history_page(
+        db,
+        cylinder.id,
+        page,
+        size,
+        since=since,
+        until=until,
+        device_status=device_status,
+        gas_exceeded=gas_exceeded,
+        gas_threshold=threshold,
+    )
 
     items = []
     for row in rows:

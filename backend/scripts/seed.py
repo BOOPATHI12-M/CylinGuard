@@ -57,6 +57,15 @@ READING_INTERVAL_MINUTES = 15
 MEAL_WINDOWS = [(7, 0.14), (12, 0.18), (19, 0.22)]
 BASELINE_GAS = 180          # clean-air MQ-6 ADC baseline
 GAS_LEAK_THRESHOLD = 700
+# A past gas incident, as an offset back from `now`. The *readings* carry the raised
+# values across this window and the safety events sit on its edges, so the Safety page's
+# event log and the History page's "gas over threshold" filter agree with each other.
+# Seeding the events alone left a leak that no reading could corroborate - exactly the
+# cross-page inconsistency a demo exposes.
+LEAK_FROM_HOURS_AGO = 9 * 24 + 6
+LEAK_TO_HOURS_AGO = 9 * 24 + 5
+LEAK_GAS = 812
+CLEARING_GAS = 240
 
 # Tables owned by CylinGuard, ordered child -> parent for safe truncation.
 OWNED_TABLES = [
@@ -117,7 +126,12 @@ def generate_readings(cylinder_id: int, now: datetime):
 
         # Load-cell noise: +/- ~15 g, the thing the smoother has to absorb.
         measured = true_weight + rng.gauss(0, 0.015)
-        gas = max(0, int(rng.gauss(BASELINE_GAS, 18)))
+        hours_ago = (now - ts).total_seconds() / 3600
+        if LEAK_TO_HOURS_AGO <= hours_ago <= LEAK_FROM_HOURS_AGO:
+            # Inside the seeded incident: readings genuinely show gas above the threshold.
+            gas = max(0, int(rng.gauss(LEAK_GAS, 25)))
+        else:
+            gas = max(0, int(rng.gauss(BASELINE_GAS, 18)))
 
         yield SensorReading(
             cylinder_id=cylinder_id,
@@ -324,21 +338,21 @@ def main() -> int:
             [
                 SafetyEvent(
                     cylinder_id=cylinder.id,
-                    gas_value=812,
+                    gas_value=LEAK_GAS,
                     threshold=GAS_LEAK_THRESHOLD,
                     buzzer_status="ON",
                     relay_status="ACTIVATED",
                     event_type="LEAK_SUSPECTED",
-                    created_at=now - timedelta(days=9, hours=6),
+                    created_at=now - timedelta(hours=LEAK_FROM_HOURS_AGO),
                 ),
                 SafetyEvent(
                     cylinder_id=cylinder.id,
-                    gas_value=240,
+                    gas_value=CLEARING_GAS,
                     threshold=GAS_LEAK_THRESHOLD,
                     buzzer_status="OFF",
                     relay_status="NORMAL",
                     event_type="CLEARED",
-                    created_at=now - timedelta(days=9, hours=5),
+                    created_at=now - timedelta(hours=LEAK_TO_HOURS_AGO),
                 ),
             ]
         )

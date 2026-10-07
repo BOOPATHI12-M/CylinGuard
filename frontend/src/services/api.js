@@ -148,8 +148,21 @@ export const monitoring = {
     api.get(`/consumption/${id}`, { params: { days } }).then((r) => r.data),
   prediction: (id) => api.get(`/prediction/${id}`).then((r) => r.data),
   safety: (id, limit = 20) => api.get(`/safety/${id}`, { params: { limit } }).then((r) => r.data),
-  history: (id, { page = 1, size = 50, since } = {}) =>
-    api.get(`/history/${id}`, { params: { page, size, since } }).then((r) => r.data),
+  history: (id, { page = 1, size = 50, since, until, gasExceeded, deviceStatus } = {}) =>
+    api
+      .get(`/history/${id}`, {
+        // Axios omits undefined params, so an unset filter is simply absent rather than
+        // sent as the string "undefined".
+        params: {
+          page,
+          size,
+          since,
+          until,
+          gas_exceeded: gasExceeded,
+          device_status: deviceStatus,
+        },
+      })
+      .then((r) => r.data),
   alerts: (id, { unreadOnly = false, severity, limit = 50 } = {}) =>
     api
       .get(`/alerts/${id}`, { params: { unread_only: unreadOnly, severity, limit } })

@@ -23,6 +23,7 @@ import { CardSkeleton, LoadingSkeleton } from '../components/LoadingSkeleton'
 import { MetricCard } from '../components/MetricCard'
 import { SmartRefillCard } from '../components/SmartRefillCard'
 import { EstimateBadge, StatusBadge } from '../components/StatusBadge'
+import { useAlertSound, useCriticalSound } from '../hooks/useAlertSound'
 import { useResource } from '../hooks/useResource'
 import { monitoring } from '../services/api'
 
@@ -49,6 +50,11 @@ export function Dashboard() {
   // The socket frame wins once it exists; the fetch is only what fills the page before
   // the first push.
   const view = frame ?? dashboard.data
+
+  // Opt-in only, and fired on the transition into critical rather than on every frame -
+  // see hooks/useAlertSound.js.
+  const sound = useAlertSound()
+  useCriticalSound(view?.gas?.status, sound)
 
   if (dashboard.loading && !view) {
     return (
