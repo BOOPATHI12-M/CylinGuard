@@ -119,3 +119,9 @@ class IngestResult(BaseModel):
     prediction_days: Optional[float]
     prediction_method: str
     websocket_clients_notified: int
+    # How often the server expects this device to report, from the cylinder's
+    # `measurement_interval`. The device re-reads it from every ACK instead of
+    # carrying a compiled-in copy: the value is editable in Settings, and a firmware
+    # constant that silently disagrees with it is how a device ends up reporting at
+    # one rate while being judged offline at another.
+    report_interval_seconds: int

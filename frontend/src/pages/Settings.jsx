@@ -63,10 +63,12 @@ const FIELDS = [
     key: 'measurement_interval',
     label: 'Reporting interval',
     unit: 'seconds',
-    min: 1,
-    max: 86400,
+    // The range the firmware will honour. Offering a value the device ignores would
+    // leave this page claiming one rate while the device reports at another.
+    min: 5,
+    max: 3600,
     step: 5,
-    help: 'How often the device reports. Leak detection latency is bounded by this, so shorter is safer.',
+    help: 'How often the device reports. The device picks this up on its next report. Leak detection latency is bounded by it, so shorter is safer.',
   },
   {
     key: 'prediction_threshold',

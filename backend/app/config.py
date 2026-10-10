@@ -47,6 +47,14 @@ class Settings(BaseSettings):
     device_api_key: str = ""
     device_offline_seconds: int = 120
 
+    # The reporting interval a device will actually honour. The firmware clamps the
+    # value it is given to this range (MIN/MAX_REPORT_INTERVAL_MS in the .ino), so
+    # Settings must not accept anything outside it: a value the device silently
+    # ignores leaves the UI claiming one rate while the device reports at another,
+    # and the offline threshold is derived from the stored figure either way.
+    min_report_interval_seconds: int = 5
+    max_report_interval_seconds: int = 3600
+
     # --- Sensor processing ---
     # Weight deltas below this are load-cell noise, not real consumption.
     min_meaningful_delta_kg: float = 0.02

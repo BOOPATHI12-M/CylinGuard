@@ -271,6 +271,7 @@ def build_dashboard(db: Session, cylinder: Cylinder):
     # import would make monitoring and safety depend on each other.
     from app.schemas.monitoring import RefillRecommendation
     from app.services import refill as refill_service
+    from app.services.device_health import offline_threshold_seconds
     from app.services.safety import commanded_state
 
     buzzer, relay = commanded_state(db, cylinder.id)
@@ -281,7 +282,12 @@ def build_dashboard(db: Session, cylinder: Cylinder):
     if device is not None:
         device_info = DeviceInfo(
             device_code=device.device_code,
-            status=device.status_at(now, app_settings.device_offline_seconds),
+            status=device.status_at(
+                now,
+                offline_threshold_seconds(
+                    setting.measurement_interval if setting else None
+                ),
+            ),
             wifi_status=device.wifi_status,
             last_seen=device.last_seen,
             firmware_version=device.firmware_version,

@@ -34,8 +34,15 @@ from app.models import (
     SensorReading,
 )
 from app.schemas.ingest import SensorPacket
-from app.config import settings
-from app.services import anomaly, consumption, demo_state, lpg, monitoring, safety
+from app.services import (
+    anomaly,
+    consumption,
+    demo_state,
+    device_health,
+    lpg,
+    monitoring,
+    safety,
+)
 from app.services import prediction as prediction_service
 
 logger = logging.getLogger("cylinguard.ingest")
@@ -61,6 +68,9 @@ class PipelineOutcome:
     safety_event_created: bool
     alerts: List[Alert]
     prediction: Optional[Prediction]
+    # Echoed back to the device so firmware does not carry a hand-matched copy of a
+    # value the server owns. See `report_interval_seconds` in schemas/ingest.py.
+    report_interval_seconds: int
 
 
 def resolve_device(db: Session, device_code: str) -> Tuple[Device, Cylinder]:
@@ -158,6 +168,7 @@ def process(
     critical = setting.critical_lpg_threshold if setting else Decimal("10.00")
     gas_threshold = int(setting.gas_leakage_threshold) if setting else 700
     anomaly_threshold = setting.anomaly_threshold if setting else Decimal("60.00")
+    report_interval = setting.measurement_interval if setting else 30
 
     # Captured before the new reading lands, so a transition can be detected.
     previous_status = _previous_level_status(db, cylinder, low, critical)
@@ -170,7 +181,10 @@ def process(
     # Was the device considered offline *before* this packet landed? Read now,
     # because updating last_seen below destroys the evidence.
     was_offline = (
-        device.status_at(datetime.now(), settings.device_offline_seconds) == "OFFLINE"
+        device.status_at(
+            datetime.now(), device_health.offline_threshold_seconds(report_interval)
+        )
+        == "OFFLINE"
     )
 
     reading = SensorReading(
@@ -371,4 +385,5 @@ def process(
         safety_event_created=safety_event is not None,
         alerts=alerts,
         prediction=prediction,
+        report_interval_seconds=report_interval,
     )

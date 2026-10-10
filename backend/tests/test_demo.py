@@ -13,7 +13,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import func, select
 
-from app.models import Alert, Device, SensorReading
+from app.models import Alert, Device, SensorReading, Setting
 from app.services import demo_state, device_health, simulator
 from app.services.consumption import IMPLAUSIBLE_DROP
 
@@ -358,3 +358,61 @@ def test_demo_routes_require_ownership(client, db, cylinder, auth):
 
 def test_demo_routes_require_a_token(client, cylinder):
     assert client.get(f"/api/demo/{cylinder.id}").status_code == 401
+
+# --------------------------------------------------------------------------
+# The offline threshold is per device, derived from measurement_interval.
+# --------------------------------------------------------------------------
+
+
+def _set_interval(db, cylinder, seconds):
+    row = db.execute(
+        select(Setting).where(Setting.cylinder_id == cylinder.id)
+    ).scalar_one()
+    row.measurement_interval = seconds
+    db.flush()
+    return row
+
+
+def test_threshold_is_the_larger_of_the_floor_and_four_intervals():
+    floor = device_health.settings.device_offline_seconds
+    # A fast reporter must not be judged more harshly than the global floor.
+    assert device_health.offline_threshold_seconds(5) == floor
+    # A slow reporter gets proportionally longer.
+    assert device_health.offline_threshold_seconds(900) == 3600
+    # No settings row, or a nonsense value, falls back to the floor alone.
+    assert device_health.offline_threshold_seconds(None) == floor
+    assert device_health.offline_threshold_seconds(0) == floor
+
+
+def test_a_slow_reporter_is_not_declared_offline_between_reports(db, cylinder):
+    """The bug this guards: Settings allows an interval up to 86,400s, while the
+    global floor is 120s. A device legitimately reporting once an hour would be
+    declared offline within two minutes - and, because `last_seen` keeps moving
+    forward, a fresh alert on every single report, forever."""
+    _set_interval(db, cylinder, 3600)
+    _go_quiet(db, cylinder.id, seconds=600)   # 10 minutes: well past the 120s floor
+
+    assert _sweep(db, cylinder) == []
+
+
+def test_a_slow_reporter_still_goes_offline_eventually(db, cylinder):
+    _set_interval(db, cylinder, 3600)
+    # Four missed hourly reports is a fault, not a schedule.
+    _go_quiet(db, cylinder.id, seconds=4 * 3600 + 60)
+
+    created = _sweep(db, cylinder)
+    assert len(created) == 1
+    # The message must quote the threshold actually applied, not the global floor.
+    assert "14400s threshold" in created[0].message
+
+
+def test_dashboard_agrees_with_the_sweep_for_a_slow_reporter(db, cylinder, client, auth):
+    """The sweep and the dashboard derive the status independently, so they have to
+    read the same threshold or the UI says OFFLINE while no alert exists."""
+    _set_interval(db, cylinder, 3600)
+    _go_quiet(db, cylinder.id, seconds=600)
+
+    db.commit()
+    body = client.get(f"/api/dashboard/{cylinder.id}", headers=auth).json()
+    assert body["device"]["status"] == "ONLINE"
+    assert _sweep(db, cylinder) == []

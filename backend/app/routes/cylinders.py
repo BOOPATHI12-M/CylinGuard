@@ -22,6 +22,7 @@ from app.dependencies import get_current_user
 from app.models import Cylinder, User
 from app.schemas.monitoring import CylinderSummary
 from app.services import lpg, monitoring
+from app.services.device_health import offline_threshold_seconds
 
 router = APIRouter(prefix="/api/cylinders", tags=["cylinders"])
 
@@ -67,7 +68,12 @@ def list_cylinders(
                 status=status,
                 # Derived per request from last_seen, never stored.
                 device_status=(
-                    device.status_at(now, app_settings.device_offline_seconds)
+                    device.status_at(
+                        now,
+                        offline_threshold_seconds(
+                            setting.measurement_interval if setting else None
+                        ),
+                    )
                     if device is not None
                     else None
                 ),

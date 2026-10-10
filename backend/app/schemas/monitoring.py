@@ -15,6 +15,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.config import settings
+
 
 class CylinderInfo(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -227,7 +229,13 @@ class SettingsUpdate(BaseModel):
     critical_lpg_threshold: Optional[float] = Field(default=None, gt=0, le=100)
     gas_leakage_threshold: Optional[int] = Field(default=None, gt=0, le=4095)
     anomaly_threshold: Optional[float] = Field(default=None, gt=0, le=999)
-    measurement_interval: Optional[int] = Field(default=None, gt=0, le=86400)
+    # Bounded by what the firmware will honour, not by the CHECK constraint alone:
+    # see min/max_report_interval_seconds in config.py.
+    measurement_interval: Optional[int] = Field(
+        default=None,
+        ge=settings.min_report_interval_seconds,
+        le=settings.max_report_interval_seconds,
+    )
     prediction_threshold: Optional[int] = Field(default=None, ge=0, le=365)
     demo_mode: Optional[bool] = None
 

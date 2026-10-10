@@ -86,6 +86,7 @@ async def ingest_sensor_data(
                 "prediction_method": outcome.prediction.method
                 if outcome.prediction
                 else "NONE",
+                "report_interval_seconds": outcome.report_interval_seconds,
             },
             payload,
         )

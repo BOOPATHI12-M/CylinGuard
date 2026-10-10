@@ -83,9 +83,18 @@ static const bool  CALIBRATION_MODE = false;
 static const long  HX711_OFFSET     = 0L;        // from calibration step 2
 static const float HX711_SCALE      = 1.0f;      // from calibration step 4
 
-// Must match `measurement_interval` in the cylinder's settings row. Leak detection
-// latency is bounded by this, so shorter is safer.
+// Starting reporting interval, used until the first successful POST. The server owns
+// this value (`measurement_interval` in the cylinder's settings row) and returns it in
+// every ACK, so the device adopts the server's figure at runtime rather than needing
+// this constant kept in sync by hand. Leak detection latency is bounded by the
+// interval, so shorter is safer.
 static const unsigned long REPORT_INTERVAL_MS = 30000UL;
+
+// Guard rails on what the device will accept from the ACK. A server bug or a typo in
+// Settings must not be able to silence the device for a day or melt it with a 10 ms
+// loop, so an out-of-range value is logged and ignored rather than obeyed.
+static const unsigned long MIN_REPORT_INTERVAL_MS = 5000UL;
+static const unsigned long MAX_REPORT_INTERVAL_MS = 3600000UL;   // 1 hour
 
 // Local alarm threshold, as a raw ADC value. The server has its own threshold and
 // is the authority; this one exists so the buzzer still fires when WiFi is down.
@@ -117,6 +126,8 @@ static const uint32_t WIFI_RETRY_MS      = 15000UL;
 HX711 scale;
 
 static unsigned long lastReportAt = 0;
+// Live reporting interval. Starts at the compiled-in value, then tracks the server.
+static unsigned long reportIntervalMs = REPORT_INTERVAL_MS;
 static unsigned long lastWifiAttemptAt = 0;
 static unsigned long bootedAt = 0;
 static bool alarmLatched = false;
@@ -247,6 +258,46 @@ void applyLocalAlarm(int gasRaw) {
 // ===========================================================================
 
 /*
+ * Adopt the reporting interval the server asked for, if it is sane.
+ *
+ * The server owns `measurement_interval`; it is editable in Settings, so a firmware
+ * constant that disagrees with it is how a device ends up reporting at one rate while
+ * being judged offline at another. Only that one field is read - the rest of the ACK
+ * is diagnostics - and a filter keeps the parse small, which matters on a board where
+ * the JSON document competes with the WiFi buffers for heap.
+ *
+ * An out-of-range value is logged and ignored rather than obeyed: a typo in Settings
+ * must not be able to silence the device for a day, and leak latency is bounded by
+ * this interval.
+ */
+static void adoptServerInterval(const String &ackBody) {
+  if (ackBody.length() == 0) return;
+
+  JsonDocument filter;
+  filter["report_interval_seconds"] = true;
+
+  JsonDocument ack;
+  if (deserializeJson(ack, ackBody, DeserializationOption::Filter(filter))) return;
+
+  unsigned long seconds = ack["report_interval_seconds"] | 0UL;
+  if (seconds == 0) return;   // field absent: an older server, so keep what we have
+
+  unsigned long wanted = seconds * 1000UL;
+  if (wanted < MIN_REPORT_INTERVAL_MS || wanted > MAX_REPORT_INTERVAL_MS) {
+    Serial.printf("[post] ignoring out-of-range interval %lus from server
+", seconds);
+    return;
+  }
+  if (wanted != reportIntervalMs) {
+    Serial.printf("[post] reporting interval %lums -> %lums (server)
+",
+                  reportIntervalMs, wanted);
+    reportIntervalMs = wanted;
+  }
+}
+
+
+/*
  * POST one reading. Returns true on 2xx.
  *
  * No timestamp is sent. The ESP32 has no battery-backed clock, so after a power
@@ -285,6 +336,7 @@ bool postReading(float weightKg, int gasRaw) {
     int code = http.POST(body);
     if (code >= 200 && code < 300) {
       Serial.printf("[post] %.3f kg, gas %d -> HTTP %d\n", weightKg, gasRaw, code);
+      adoptServerInterval(http.getString());
       http.end();
       return true;
     }
@@ -359,7 +411,7 @@ void loop() {
   // Subtraction, not `>`: millis() overflows after ~49 days and unsigned
   // subtraction stays correct across the wrap. Comparing absolute values would
   // leave the device silent until the next reboot.
-  if (now - lastReportAt >= REPORT_INTERVAL_MS) {
+  if (now - lastReportAt >= reportIntervalMs) {
     lastReportAt = now;
     float weightKg = readWeightKg();
     if (!postReading(weightKg, gasRaw)) {
