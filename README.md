@@ -147,10 +147,14 @@ remaining kg, average daily consumption, 7-day average, 30-day average, recent c
 consumption variance, and day of week. It learns that weekends differ from weekdays, and that this
 kitchen is not the average kitchen.
 
-**When there is not enough history, CylinGuard says so.** It falls back to plain arithmetic —
+**When the model cannot be trusted, CylinGuard says so.** It falls back to plain arithmetic —
 `remaining_lpg / average_daily_consumption` — reports low confidence, and labels the result
-`ESTIMATE`. Every prediction carries a confidence value derived from sample count and variance.
-None of them are promises.
+`ESTIMATE`. That happens for any of three reasons: there is not enough history, no model has been
+trained yet (see step 5 of Getting started), or the trained model performs *worse than the flat
+average* on cross-validation. The last one is the interesting case, and it has happened here: a
+model that loses to guessing the mean is refused rather than displayed with an ML badge. Every
+prediction carries a confidence value derived from sample count and variance. None of them are
+promises.
 
 ### Abnormal consumption
 
