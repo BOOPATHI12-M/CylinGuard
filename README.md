@@ -283,6 +283,7 @@ cylinguard/
 ├── database/schema.sql
 ├── nginx/nginx.conf
 ├── iot/esp32/cylinguard_esp32.ino
+├── iot/esp32/CIRCUIT.md
 ├── docker-compose.yml
 └── .env.example
 ```
@@ -511,8 +512,10 @@ Two supply details that are easy to get wrong and damage the board:
   and halves the scale, so `GAS_ALARM_THRESHOLD` has to be re-derived against your own warmed-up
   sensor rather than left at its default.
 
-The pin map, the calibration procedure and these notes are all in the header of
-[`iot/esp32/cylinguard_esp32.ino`](iot/esp32/cylinguard_esp32.ino).
+**[`iot/esp32/CIRCUIT.md`](iot/esp32/CIRCUIT.md) is the wiring guide**: the circuit diagram, a
+connection table per module, power and grounding, the calibration procedure, a bring-up order that
+puts the valve last, and a troubleshooting table. The pin map and tuning constants live in the
+header of [`iot/esp32/cylinguard_esp32.ino`](iot/esp32/cylinguard_esp32.ino).
 
 The firmware connects to WiFi, reads both sensors, builds a JSON payload and POSTs it to
 `/api/iot/sensor-data` at a configurable interval. WiFi credentials, server URL and device ID live
