@@ -85,8 +85,10 @@ Together they answer the three questions that matter:
                    └──> NGINX ──> FastAPI
 ```
 
-An ESP32 sits under the cylinder. Every 30 seconds it reads the load cell through an HX711
-amplifier, samples the MQ-6 sensor, and POSTs a small JSON packet to the server.
+An ESP32 sits under the cylinder. It reads the load cell through an HX711 amplifier, samples the
+MQ-6 sensor, and POSTs a small JSON packet to the server. How often is the server's decision, not
+the firmware's: the reporting interval is a setting, returned in every response, and the device
+adopts it on its next report.
 
 The backend then runs one pipeline, in order:
 
@@ -487,14 +489,30 @@ dimensions and detection thresholds, and nothing else.
 
 ## Hardware
 
-| Component | Role |
-| --- | --- |
-| ESP32 | WiFi microcontroller, reads sensors and posts to the server |
-| Load cell (20 kg) | Measures total cylinder weight |
-| HX711 | 24-bit amplifier that makes the load cell readable |
-| MQ-6 | LPG gas sensor, analogue output |
-| Buzzer | Local audible alarm, independent of the network |
-| Relay | Actuator output for a solenoid cutoff valve |
+| Component | Spec | Role |
+| --- | --- | --- |
+| ESP32 | WROOM-32, 30- or 38-pin | WiFi microcontroller, reads sensors and posts to the server |
+| Load cell | **50 kg**, single-point, 4-wire | Measures total cylinder weight |
+| HX711 | breakout, powered at **3.3V** | 24-bit amplifier that makes the load cell readable |
+| MQ-6 | module with analogue `AOUT`, 5V | LPG gas sensor — MQ-6 specifically, not MQ-2 or MQ-5 |
+| Buzzer | 5V active + NPN transistor | Local audible alarm, independent of the network |
+| Relay | 1-channel, 5V, opto-isolated | Actuator output for a solenoid cutoff valve |
+| Supply | 5V 2A | ESP32 WiFi peaks plus the MQ-6 heater |
+
+A 15 kg cylinder holding 14.2 kg weighs about **29 kg gross**, so a 20 kg load cell would sit at
+full scale with no headroom — 50 kg is the right size, not over-specification.
+
+Two supply details that are easy to get wrong and damage the board:
+
+- **Power the HX711 from 3.3V, not 5V.** Its `DOUT` swings to whatever `VCC` is, and the ESP32's
+  GPIOs are 3.3V parts. At 5V you are driving an input above its absolute maximum.
+- **Divide the MQ-6's `AOUT`.** The heater needs 5V, so `AOUT` can reach ~5V, which is over the
+  ADC's input range. Two 10 kΩ resistors (`AOUT → 10k → pin → 10k → GND`) brings it in range —
+  and halves the scale, so `GAS_ALARM_THRESHOLD` has to be re-derived against your own warmed-up
+  sensor rather than left at its default.
+
+The pin map, the calibration procedure and these notes are all in the header of
+[`iot/esp32/cylinguard_esp32.ino`](iot/esp32/cylinguard_esp32.ino).
 
 The firmware connects to WiFi, reads both sensors, builds a JSON payload and POSTs it to
 `/api/iot/sensor-data` at a configurable interval. WiFi credentials, server URL and device ID live
@@ -505,9 +523,15 @@ in a clearly marked config block at the top of the sketch — no real credential
   "device_id": "ESP32-CYL-001",
   "total_weight_kg": 21.4,
   "gas_sensor_value": 420,
-  "timestamp": "2026-10-05T15:00:00"
+  "wifi_status": "CONNECTED",
+  "firmware_version": "1.0.0"
 }
 ```
+
+No timestamp is sent. The ESP32 has no battery-backed clock, so after a power cut its time is 1970
+— and the server rejects anything more than 7 days old. Omitting it lets the server stamp the
+reading with its own clock, which is right far more often than the device's guess. The field is
+still accepted from a device that does keep time.
 
 The buzzer and relay are driven locally by the ESP32 as well as by the server, so the alarm still
 sounds if the network is down.

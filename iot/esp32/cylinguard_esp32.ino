@@ -28,10 +28,24 @@
  * ---------------------------------------------------------------------------
  * HARDWARE
  * ---------------------------------------------------------------------------
- *   HX711       DOUT -> GPIO 16      SCK -> GPIO 4       VCC 5V   GND GND
- *   MQ-6        AOUT -> GPIO 34      (ADC1, input-only: see the note below)
+ *   HX711       DOUT -> GPIO 16      SCK -> GPIO 4       VCC 3.3V  GND GND
+ *   MQ-6        AOUT -> divider -> GPIO 34               VCC 5V    GND GND
  *   Buzzer      +    -> GPIO 26      active-high through a transistor
  *   Relay       IN   -> GPIO 27      most modules are active-LOW; see RELAY_ACTIVE_LOW
+ *
+ *   Load cell: 50 kg single-point, 4-wire, into the HX711's E+/E-/A+/A-. A 15 kg
+ *   cylinder holding 14.2 kg weighs about 29 kg gross, so a 20 kg cell would sit
+ *   near full scale with no headroom.
+ *
+ *   Power the HX711 from 3.3V, NOT 5V. Its DOUT swings to VCC, and the ESP32's
+ *   GPIOs are 3.3V parts - at 5V you are driving an input above its absolute
+ *   maximum. The HX711 works fine at 3.3V; it only costs a little range.
+ *
+ *   The MQ-6 needs 5V for its heater and cannot simply be run at 3.3V, so its AOUT
+ *   can swing to about 5V. Put a divider between AOUT and GPIO 34 - two 10k
+ *   resistors, AOUT -> 10k -> pin -> 10k -> GND - or you are over the ADC's input
+ *   range. That halves the scale, so GAS_ALARM_THRESHOLD has to be re-derived
+ *   against your own warmed-up sensor rather than trusted at its default.
  *
  *   GPIO 34 is on ADC1. Do not move the MQ-6 to a GPIO on ADC2 (0, 2, 4, 12-15,
  *   25-27): ADC2 is unavailable while WiFi is running, and analogRead() there
@@ -98,6 +112,12 @@ static const unsigned long MAX_REPORT_INTERVAL_MS = 3600000UL;   // 1 hour
 
 // Local alarm threshold, as a raw ADC value. The server has its own threshold and
 // is the authority; this one exists so the buzzer still fires when WiFi is down.
+//
+// 700 is a starting point, not a calibrated figure. It assumes a 12-bit read of a
+// 5V AOUT through the 2:1 divider described in the header - change the divider and
+// this number means something else. Derive your own: let the sensor warm up for a
+// few minutes in clean air, note the resting value, and set this well above it.
+// Too low alarms on cooking fumes until nobody believes it; too high is worse.
 static const int GAS_ALARM_THRESHOLD = 700;
 
 // Most cheap relay modules energise on a LOW input. Get this wrong and the valve
