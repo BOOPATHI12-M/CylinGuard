@@ -360,6 +360,34 @@ Re-running is safe — the seeder detects existing data and stops. To regenerate
 
 > `--reset` truncates all nine tables and destroys any real data collected.
 
+### 5. Train the prediction model
+
+Seeding gives you the history; it does not give you a model. Train one against it:
+
+```powershell
+# with the backend running, logged in as the demo user
+curl -X POST http://127.0.0.1:8000/api/ml/train/1 -H "Authorization: Bearer <token>"
+```
+
+Until you do, predictions come from the arithmetic fallback and the UI badge reads `ESTIMATE`
+rather than `POWERED BY ML`. That is correct behaviour, not a bug — the system refuses to present a
+model it does not have.
+
+**This step is needed on every fresh clone.** The trained model is written to
+`backend/app/ml/artifacts/`, which is gitignored: a 280 KB binary fitted to one household's data
+does not belong in version control, and committing it would mean everyone's predictions came from
+whoever trained it last.
+
+Two things worth knowing about how this behaves:
+
+- **Training alone does not change the displayed prediction.** The prediction endpoint serves the
+  last *stored* prediction row, so the old value stands until a new reading recomputes it. Post a
+  reading — or wait for your device to — and the method flips to `ML`.
+- **A model that loses to the flat average is refused.** `/api/ml/status` reports `trained`,
+  `beats_baseline` and `in_use` separately for exactly this reason: a trained model that is worse
+  than guessing the mean stays out of use, and the fallback keeps serving. This has happened in
+  development, which is why the check exists.
+
 ### What the seed data simulates
 
 Not random noise — a plausible household:

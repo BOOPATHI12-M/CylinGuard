@@ -421,8 +421,7 @@ void loop() {
   }
 
   int gasRaw = readGasRaw();
-  // Every cycle, not only when reporting: the local alarm must not wait on the
-  // report interval.
+  // Every cycle, not only when reporting: the local alarm must not wait 
   applyLocalAlarm(gasRaw);
 
   connectWifi(false);
