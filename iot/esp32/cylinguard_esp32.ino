@@ -56,19 +56,39 @@
  * ---------------------------------------------------------------------------
  *   HX711 by Bogdan Necula          (bogde/HX711)
  *   ArduinoJson by Benoit Blanchon  (v7)
- *   WiFi, HTTPClient                bundled with the ESP32 core
+ *   WiFi, HTTPClient, Preferences   bundled with the ESP32 core
  *
  * ---------------------------------------------------------------------------
- * CALIBRATION - do this before the first real run
+ * CALIBRATION - at runtime, over the serial monitor
  * ---------------------------------------------------------------------------
- *   1. Flash with CALIBRATION_MODE true. Leave the scale empty.
- *   2. Open Serial at 115200. It prints a raw average: that is HX711_OFFSET.
- *   3. Put a known weight on it (a 5 kg bag, say). Note the new raw average.
- *   4. HX711_SCALE = (loaded_raw - HX711_OFFSET) / known_kg
- *   5. Put both numbers below, set CALIBRATION_MODE false, reflash.
+ * The calibration factor is stored in NVS (Preferences, namespace "cylguard",
+ * key "calFactor"), so it survives a power cut and a reflash. Done once per
+ * load cell, not once per build.
  *
- * Without this the reported weight is meaningless, and because the backend
- * derives gas remaining from it, so is everything downstream.
+ *   1. Power up with the platform EMPTY. The sketch tares itself and reports
+ *      whether a saved factor was found.
+ *   2. If none was found: place exactly KNOWN_CALIBRATION_WEIGHT_KG on the
+ *      platform and type C in the serial monitor (115200).
+ *   3. Check that the reference weight now reads back correctly.
+ *   4. Type D at any time to delete the saved factor and start over.
+ *
+ * Until a factor is stored, readWeightKg() returns -1 and the sketch does not
+ * post. An uncalibrated weight is worse than no weight: the backend derives
+ * remaining gas, consumption, the prediction and the refill recommendation from
+ * it, so a wrong number propagates everywhere while looking plausible.
+ *
+ * TWO LIMITATIONS OF THIS SCHEME, worth knowing before you rely on it:
+ *
+ *   - The tare offset is NOT persisted - only the factor is. The platform must
+ *     therefore be empty at EVERY boot. If the cylinder is standing on it when
+ *     the board resets - a power cut, a brownout, pressing EN - that weight
+ *     becomes the new zero, and every reading afterwards is short by a full
+ *     cylinder while looking entirely reasonable.
+ *
+ *   - A small reference weight on a 50 kg cell amplifies its own error. The
+ *     factor derived from 500 g gets multiplied by roughly 58 to reach a full
+ *     cylinder, and the error multiplies with it. A 5 kg reference is far more
+ *     forgiving; set KNOWN_CALIBRATION_WEIGHT_KG to whatever you actually have.
  * ============================================================================
  */
 
@@ -77,14 +97,15 @@
 #include <HTTPClient.h>
 #include <WiFi.h>
 #include "HX711.h"
+#include <Preferences.h>
 
 // ===========================================================================
 // CONFIGURATION - placeholders only. Replace before flashing.
 // Nothing real is committed here: this file is in git, and a repository is not
 // a secret store.
 // ===========================================================================
-static const char *WIFI_SSID      = "YOUR_WIFI_SSID";
-static const char *WIFI_PASSWORD  = "YOUR_WIFI_PASSWORD";
+static const char *WIFI_SSID      = "bm";
+static const char *WIFI_PASSWORD  = "12345678";
 
 // The CylinGuard API. Use the host's LAN address, not localhost - that means the
 // ESP32 itself. Port 80 is the nginx edge; use :8000 to reach uvicorn directly.
@@ -93,9 +114,12 @@ static const char *DEVICE_ID      = "ESP32-CYL-001";   // must already exist in 
 // Matches DEVICE_API_KEY in the server's .env. Leave empty if that is unset.
 static const char *DEVICE_API_KEY = "";
 
-static const bool  CALIBRATION_MODE = false;
-static const long  HX711_OFFSET     = 0L;        // from calibration step 2
-static const float HX711_SCALE      = 1.0f;      // from calibration step 4
+static const bool CALIBRATION_MODE = false; // kept for compatibility
+static const float KNOWN_CALIBRATION_WEIGHT_KG = 0.500f; // place exactly 500 g
+static float HX711_OFFSET = 0.0f;
+static float HX711_SCALE = 0.0f; // raw counts per kg; loaded from Preferences
+static Preferences scalePrefs;
+static bool weightCalibrated = false;
 
 // Starting reporting interval, used until the first successful POST. The server owns
 // this value (`measurement_interval` in the cylinder's settings row) and returns it in
@@ -136,7 +160,7 @@ static const uint8_t PIN_RELAY      = 27;
 // ===========================================================================
 // TUNING
 // ===========================================================================
-static const uint8_t  WEIGHT_SAMPLES     = 10;     // median filter width
+static const uint8_t  WEIGHT_SAMPLES     = 10;     // average 10 samples
 static const uint8_t  GAS_SAMPLES        = 8;      // mean of successive ADC reads
 static const uint32_t MQ6_WARMUP_MS      = 60000UL;// minimum before gas is trusted
 static const uint8_t  MAX_POST_ATTEMPTS  = 3;
@@ -192,36 +216,105 @@ void connectWifi(bool blocking) {
 // ===========================================================================
 
 /*
- * Median of WEIGHT_SAMPLES raw reads, converted to kg.
+ * Mean of WEIGHT_SAMPLES raw reads, converted to kg.
  *
- * Median, not mean: one spurious sample - a knock, a bump against the cylinder -
- * shifts a mean and barely moves a median. The backend smooths again over time,
- * but a wild value should not leave the device in the first place.
+ * Returns -1 when no calibration factor is stored, so the caller can decline to
+ * post rather than send a number that looks like a measurement and is not.
+ *
+ * Note that a mean is sensitive to a single bad sample in a way a median is not:
+ * one knock against the cylinder moves it. The backend smooths again over time
+ * and classifies an implausible jump as a cylinder change rather than
+ * consumption, so this is survivable - but a median of the same 10 samples would
+ * reject the knock here, before it ever left the device.
  */
 float readWeightKg() {
-  long samples[WEIGHT_SAMPLES];
+  // Take 10 readings and calculate their arithmetic mean.
+  long long total = 0;
   for (uint8_t i = 0; i < WEIGHT_SAMPLES; i++) {
-    samples[i] = scale.read();
+    total += scale.read();
     delay(12);
   }
-  // Insertion sort: WEIGHT_SAMPLES is 10, so anything cleverer is wasted code.
-  for (uint8_t i = 1; i < WEIGHT_SAMPLES; i++) {
-    long key = samples[i];
-    int8_t j = i - 1;
-    while (j >= 0 && samples[j] > key) {
-      samples[j + 1] = samples[j];
-      j--;
-    }
-    samples[j + 1] = key;
+  float averageRaw = (float)total / WEIGHT_SAMPLES;
+
+  if (!weightCalibrated || HX711_SCALE == 0.0f) {
+    Serial.printf("[weight] raw average of 10 samples: %.2f\n", averageRaw);
+    return -1.0f; // not calibrated: do not report a fake kg value
   }
-  long median = samples[WEIGHT_SAMPLES / 2];
 
-  if (HX711_SCALE == 0.0f) return 0.0f;   // uncalibrated: do not divide by zero
-  float kg = (float)(median - HX711_OFFSET) / HX711_SCALE;
+  float kg = (averageRaw - HX711_OFFSET) / HX711_SCALE;
+  if (kg < 0.0f) kg = 0.0f;
+  Serial.printf("[weight] 10-sample raw average: %.2f | Weight: %.3f kg\n",
+                averageRaw, kg);
+  return kg;
+}
 
-  // The server rejects a negative weight, so do not send one. A reading below the
-  // tare on a near-empty cylinder is normal drift.
-  return kg < 0.0f ? 0.0f : kg;
+// At startup the platform MUST be empty. This records the zero offset.
+// Calibration factor still requires a known reference weight; it cannot be
+// physically inferred from an empty platform alone.
+void initializeScaleCalibration() {
+  if (!scale.wait_ready_timeout(3000)) {
+    Serial.println("[weight] ERROR: HX711 not responding.");
+    return;
+  }
+
+  Serial.println("[weight] Keep platform EMPTY and still for tare...");
+  delay(3000);
+  scale.tare(20);
+  HX711_OFFSET = (float)scale.get_offset();
+
+  scalePrefs.begin("cylguard", true);
+  float savedFactor = scalePrefs.getFloat("calFactor", 0.0f);
+  scalePrefs.end();
+
+  if (savedFactor != 0.0f) {
+    HX711_SCALE = savedFactor;
+    weightCalibrated = true;
+    Serial.printf("[weight] Saved calibration loaded: %.6f\n", HX711_SCALE);
+    Serial.println("[weight] Weight measurement enabled.");
+  } else {
+    weightCalibrated = false;
+    Serial.println("[weight] No saved calibration factor.");
+    Serial.println("[weight] Place exactly 500 g on platform, then type C.");
+    Serial.println("[weight] Type D to delete saved calibration.");
+  }
+}
+
+void handleCalibrationSerial() {
+  while (Serial.available()) {
+    char command = Serial.read();
+    if (command == 'C' || command == 'c') {
+      if (!scale.wait_ready_timeout(2000)) {
+        Serial.println("[calibration] HX711 not ready.");
+        return;
+      }
+      Serial.println("[calibration] Keep the known 500 g weight still...");
+      delay(1500);
+      // scale.get_value() subtracts the current tare offset.
+      long counts = scale.get_value(30);
+      if (labs(counts) < 100) {
+        Serial.println("[calibration] ERROR: counts too small. Check wiring and weight.");
+        return;
+      }
+      HX711_SCALE = (float)counts / KNOWN_CALIBRATION_WEIGHT_KG;
+      if (HX711_SCALE == 0.0f) {
+        Serial.println("[calibration] ERROR: invalid factor.");
+        return;
+      }
+      scalePrefs.begin("cylguard", false);
+      scalePrefs.putFloat("calFactor", HX711_SCALE);
+      scalePrefs.end();
+      weightCalibrated = true;
+      Serial.printf("[calibration] Saved factor: %.6f\n", HX711_SCALE);
+      Serial.println("[calibration] Now check that 500 g displays about 0.500 kg.");
+    } else if (command == 'D' || command == 'd') {
+      scalePrefs.begin("cylguard", false);
+      scalePrefs.remove("calFactor");
+      scalePrefs.end();
+      weightCalibrated = false;
+      HX711_SCALE = 0.0f;
+      Serial.println("[calibration] Saved factor deleted. Reset ESP32 with empty platform.");
+    }
+  }
 }
 
 int readGasRaw() {
@@ -304,13 +397,11 @@ static void adoptServerInterval(const String &ackBody) {
 
   unsigned long wanted = seconds * 1000UL;
   if (wanted < MIN_REPORT_INTERVAL_MS || wanted > MAX_REPORT_INTERVAL_MS) {
-    Serial.printf("[post] ignoring out-of-range interval %lus from server
-", seconds);
+    Serial.printf("[post] ignoring out-of-range interval %lus from server\n", seconds);
     return;
   }
   if (wanted != reportIntervalMs) {
-    Serial.printf("[post] reporting interval %lums -> %lums (server)
-",
+    Serial.printf("[post] reporting interval %lums -> %lums (server)\n",
                   reportIntervalMs, wanted);
     reportIntervalMs = wanted;
   }
@@ -398,20 +489,26 @@ void setup() {
   analogSetPinAttenuation(PIN_MQ6, ADC_11db);
 
   scale.begin(PIN_HX711_DOUT, PIN_HX711_SCK);
+  initializeScaleCalibration();
 
   connectWifi(true);
 
   if (CALIBRATION_MODE) {
     Serial.println("[calib] CALIBRATION MODE - not reporting to the API");
-  } else if (HX711_SCALE == 1.0f && HX711_OFFSET == 0L) {
-    Serial.println("[warn] HX711 is UNCALIBRATED - weights will be meaningless.");
-    Serial.println("[warn] Run CALIBRATION_MODE first; see the header of this file.");
+  } else if (!weightCalibrated) {
+    // Checked against weightCalibrated, not against the old sentinel values:
+    // HX711_SCALE now starts at 0 and is loaded from NVS, so comparing it to 1.0f
+    // would never fire and this warning would never appear.
+    Serial.println("[warn] HX711 is UNCALIBRATED - no weight will be reported.");
+    Serial.println("[warn] Place the reference weight and type C; see the file header.");
   }
   Serial.printf("[boot] MQ-6 warm-up: %lus before gas readings are trusted\n",
                 MQ6_WARMUP_MS / 1000UL);
 }
 
 void loop() {
+  handleCalibrationSerial();
+
   if (CALIBRATION_MODE) {
     long total = 0;
     for (uint8_t i = 0; i < 20; i++) { total += scale.read(); delay(50); }
@@ -421,7 +518,8 @@ void loop() {
   }
 
   int gasRaw = readGasRaw();
-  // Every cycle, not only when reporting: the local alarm must not wait 
+  // Every cycle, not only when reporting: the local alarm must not wait on the
+  // report interval.
   applyLocalAlarm(gasRaw);
 
   connectWifi(false);
@@ -433,7 +531,9 @@ void loop() {
   if (now - lastReportAt >= reportIntervalMs) {
     lastReportAt = now;
     float weightKg = readWeightKg();
-    if (!postReading(weightKg, gasRaw)) {
+    if (weightKg < 0.0f) {
+      Serial.println("[weight] Weight unavailable: calibration required.");
+    } else if (!postReading(weightKg, gasRaw)) {
       Serial.println("[post] giving up on this cycle; the server will mark the device OFFLINE");
     }
   }

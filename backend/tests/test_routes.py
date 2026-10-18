@@ -325,3 +325,67 @@ def test_history_filters_device_status(client, cylinder, auth):
 def test_history_rejects_an_unknown_device_status(client, cylinder, auth):
     response = client.get(f"/api/history/{cylinder.id}?device_status=MAYBE", headers=auth)
     assert response.status_code == 422
+
+
+# --- more than one device on a cylinder -----------------------------------
+#
+# `ix_devices_cylinder` is non-unique, so this is legal in the schema - a cylinder
+# can carry an ESP32 and a manual-entry stand-in, or a board mid-replacement. The
+# code used to assume one: `monitoring.get_device` ended in `scalar_one_or_none()`,
+# which raises MultipleResultsFound on two rows and took out the dashboard, the
+# cylinder list and the WebSocket frame together. Each test below fails against
+# that version.
+
+def test_two_devices_do_not_break_the_dashboard(client, db, cylinder, auth):
+    from datetime import datetime, timedelta
+
+    from app.models import Device
+
+    db.add(
+        Device(
+            cylinder_id=cylinder.id,
+            device_code="PHONE-MANUAL-001",
+            wifi_status="MANUAL",
+            last_seen=(datetime.now() + timedelta(seconds=30)).replace(microsecond=0),
+            firmware_version="manual",
+        )
+    )
+    db.flush()
+
+    dashboard = client.get(f"/api/dashboard/{cylinder.id}", headers=auth)
+    cylinders = client.get("/api/cylinders", headers=auth)
+
+    assert dashboard.status_code == 200
+    assert cylinders.status_code == 200
+    # The card answers "where did the newest data come from", so the device that
+    # reported most recently is the one named.
+    assert dashboard.json()["device"]["device_code"] == "PHONE-MANUAL-001"
+
+
+def test_a_device_that_never_reported_does_not_win(client, db, cylinder, auth):
+    """MySQL has no NULLS LAST, so the ordering has to put NULL `last_seen` behind
+    any device that has actually reported - otherwise registering a second device
+    would blank the card until it was first used."""
+    from app.models import Device
+
+    db.add(
+        Device(
+            cylinder_id=cylinder.id,
+            device_code="PHONE-MANUAL-001",
+            wifi_status="UNKNOWN",
+            last_seen=None,
+            firmware_version="manual",
+        )
+    )
+    db.flush()
+
+    body = client.get(f"/api/dashboard/{cylinder.id}", headers=auth).json()
+
+    assert body["device"]["device_code"] == "ESP32-TEST-001"
+
+
+def test_a_single_device_is_still_returned(client, cylinder, auth):
+    """Proves the ordering change left the normal case alone."""
+    body = client.get(f"/api/dashboard/{cylinder.id}", headers=auth).json()
+
+    assert body["device"]["device_code"] == "ESP32-TEST-001"

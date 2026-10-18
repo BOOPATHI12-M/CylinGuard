@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import session_scope
 from app.models import Alert, AlertSeverity, Device, Setting
+from app.services.manual_entry import MANUAL_DEVICE_CODE
 
 logger = logging.getLogger("cylinguard.devices")
 
@@ -107,6 +108,13 @@ def sweep(
     where = [(Device.last_seen.is_(None)) | (Device.last_seen < floor_cutoff)]
     if cylinder_ids is not None:
         where.append(Device.cylinder_id.in_(list(cylinder_ids)))
+
+    # The manual-entry device is a person with a phone, not hardware that can be
+    # unplugged. It is quiet between entries by definition, so sweeping it would
+    # raise an alert per typing session telling the user to "check power and WiFi"
+    # on a device that has neither - and an alert list that cries wolf gets ignored,
+    # including when it reports a leak.
+    where.append(Device.device_code != MANUAL_DEVICE_CODE)
 
     # Outer join: a cylinder with no settings row still has a device worth sweeping.
     candidates = list(

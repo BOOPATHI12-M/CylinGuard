@@ -39,8 +39,26 @@ def get_settings_row(db: Session, cylinder_id: int) -> Optional[Setting]:
 
 
 def get_device(db: Session, cylinder_id: int) -> Optional[Device]:
+    """The device whose data the dashboard is showing.
+
+    `ix_devices_cylinder` is non-unique by design, so a cylinder may legitimately
+    carry more than one device - an ESP32 and a manual-entry stand-in, or a board
+    being swapped for its replacement. A bare `scalar_one_or_none()` raises
+    `MultipleResultsFound` in that case, which would take out the dashboard, the
+    cylinder list and the WebSocket frame together.
+
+    The device card answers "where did the newest data come from", so the most
+    recently seen device is the honest pick. Ordering is three keys because MySQL
+    has no NULLS LAST: `is_(None)` sorts 0 (has reported) before 1 (never has), so
+    a device that has never reported only wins when nothing else exists. `id` is
+    the tie-break, so the answer is stable rather than whatever the planner
+    returns first.
+    """
     return db.execute(
-        select(Device).where(Device.cylinder_id == cylinder_id)
+        select(Device)
+        .where(Device.cylinder_id == cylinder_id)
+        .order_by(Device.last_seen.is_(None), Device.last_seen.desc(), Device.id)
+        .limit(1)
     ).scalar_one_or_none()
 
 

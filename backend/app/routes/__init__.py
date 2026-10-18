@@ -13,6 +13,7 @@ from app.routes import (
     demo,
     history,
     iot,
+    manual,
     ml,
     prediction,
     safety,
@@ -35,6 +36,8 @@ ROUTERS = [
     ml.router,
     iot.router,
     ws.router,
+    # Last: a human page, not an API. Keeps it out of the way in /docs.
+    manual.router,
 ]
 
 __all__ = ["ROUTERS"]
